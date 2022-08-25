@@ -172,7 +172,8 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>${maven-surefire-plugin.version}</version>
-                <configuration>
+		<configuration>
+		    <skipTests>true</skipTests>
                     <printSummary>true</printSummary>
                     <parallel>classes</parallel>
                     <threadCountClasses>3</threadCountClasses>
