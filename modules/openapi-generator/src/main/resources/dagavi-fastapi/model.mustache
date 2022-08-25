@@ -33,21 +33,21 @@ class {{classname}}(BaseModel):
     """
 
 {{#vars}}
-    {{name}}: {{#required}}{{>model_field_type}}{{/required}}{{^required}}{{>model_field_type}} | None{{/required}} = Field(alias="{{baseName}}"{{^required}}, default=None{{/required}})
+    {{name}}: {{#required}}{{>model_field_type}}{{/required}}{{^required}}{{>model_field_type}} | None{{/required}} = Field(alias = "{{baseName}}"{{#defaultValue}}, default = {{defaultValue}}{{/defaultValue}}{{^defaultValue}}{{^required}}, default = None{{/required}}{{/defaultValue}}{{#maximum}}, l{{#exclusiveMaximum}}t{{/exclusiveMaximum}}{{^exclusiveMaximum}}e{{/exclusiveMaximum}} = {{maximum}}{{/maximum}}{{#minimum}}, g{{#exclusiveMinimum}}t{{/exclusiveMinimum}}{{^exclusiveMinimum}}e{{/exclusiveMinimum}} = {{minimum}}{{/minimum}})
 {{/vars}}
 {{#vars}}
 {{#maximum}}
 
     @validator("{{name}}")
     def {{name}}_max(cls, value):
-        assert value <= {{maximum}}
+        assert value <{{#exclusiveMaximum}}={{/exclusiveMaximum}} {{maximum}}
         return value
 {{/maximum}}
 {{#minimum}}
 
     @validator("{{name}}")
     def {{name}}_min(cls, value):
-        assert value >= {{minimum}}
+        assert value >{{#exclusiveMinimum}}={{/exclusiveMinimum}} {{minimum}}
         return value
 {{/minimum}}
 {{#minLength}}
