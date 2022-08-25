@@ -53,11 +53,18 @@ def json_parameter(model: Any, required: bool = False, **query_kwargs):
 {{#operation}}
 @router.{{#lambda.lowercase}}{{httpMethod}}{{/lambda.lowercase}}(
     "{{path}}",
-    responses={
-        {{#responses}}
+    {{#responses}}
+    {{#-first}}
+    {{#dataType}}
+    response_model = {{dataType}},
+    {{/dataType}}
+    responses = {
+    {{/-first}}
         {{code}}: {{=<% %>=}}{<%#dataType%>"model": <%dataType%>, "description": "<%message%>"<%/dataType%><%^dataType%>"description": "<%message%>"<%/dataType%>}<%={{ }}=%>,
-        {{/responses}}
+    {{#-last}}
     },
+    {{/-last}}
+    {{/responses}}
     tags=[{{#tags}}"{{name}}"{{^-last}},{{/-last}}{{/tags}}],
     {{#summary}}
     summary="{{.}}",
@@ -65,7 +72,8 @@ def json_parameter(model: Any, required: bool = False, **query_kwargs):
     {{#description}}
     description = "{{.}}",
     {{/description}}
-    response_model_by_alias=True,
+    response_model_by_alias = True,
+    response_model_exclude_none = True
 )
 async def {{operationId}}(
     {{#allParams}}
