@@ -77,7 +77,7 @@ def json_parameter(model: Any, required: bool = False, **query_kwargs):
 )
 async def {{operationId}}(
     {{#allParams}}
-    {{>endpoint_argument_definition}},
+    {{>api-endpoint_argument_definition}},
     {{/allParams}}
     {{#hasAuthMethods}}
     {{#authMethods}}
