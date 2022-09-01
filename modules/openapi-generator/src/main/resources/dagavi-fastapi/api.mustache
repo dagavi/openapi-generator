@@ -87,8 +87,9 @@ async def {{operationId}}(
     {{/authMethods}}
     {{/hasAuthMethods}}
 ) -> {{returnType}}{{^returnType}}None{{/returnType}}:
-    {{#notes}}"""{{.}}"""
-    ...{{/notes}}{{^notes}}...{{/notes}}
+    {{#notes}}"""{{.}}"""{{/notes}}
+    # TODO: Implement "{{operationId}}"
+    print(f'Warning: Implement "{{operationId}}"')
 {{^-last}}
 
 {{/-last}}
