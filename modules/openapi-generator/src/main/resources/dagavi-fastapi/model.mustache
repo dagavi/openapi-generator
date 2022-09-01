@@ -10,15 +10,12 @@
 {{>model-enum}}
 {{/isEnum}}
 {{^isEnum}}
-
-from __future__ import annotations
 from datetime import date, datetime  # noqa: F401
 
 import re  # noqa: F401
 from typing import Any, Dict, List, Optional  # noqa: F401
 
 from pydantic import AnyUrl, BaseModel, EmailStr, Field, validator  # noqa: F401
-
 {{#pyImports}}
 {{import}}
 {{/pyImports}}
@@ -27,11 +24,20 @@ class {{classname}}(BaseModel):
     """
     {{description}}
 
+{{#isModel}}
     {{#vars}}
         {{baseName}}: {{description}}{{^required}} [Optional]{{/required}}.
     {{/vars}}
+{{/isModel}}
     """
+{{^isModel}}
+    {{#oneOf}}{{#-first}}# oneOf
+    __root__: {{/-first}}{{.}}{{^-last}} | {{/-last}}{{/oneOf}}
+    {{#anyOf}}{{#-first}}# anyOf
+    __root__: {{/-first}}{{.}}{{^-last}} | {{/-last}}{{/anyOf}}
+{{/isModel}}
 
+{{#isModel}}
 {{#vars}}
     {{name}}: {{#required}}{{>model-field_type}}{{/required}}{{^required}}{{>model-field_type}} | None{{/required}} = Field(alias = "{{baseName}}"{{#defaultValue}}, default = {{defaultValue}}{{/defaultValue}}{{^defaultValue}}{{^required}}, default = None{{/required}}{{/defaultValue}}{{#maximum}}, l{{#exclusiveMaximum}}t{{/exclusiveMaximum}}{{^exclusiveMaximum}}e{{/exclusiveMaximum}} = {{maximum}}{{/maximum}}{{#minimum}}, g{{#exclusiveMinimum}}t{{/exclusiveMinimum}}{{^exclusiveMinimum}}e{{/exclusiveMinimum}} = {{minimum}}{{/minimum}})
 {{/vars}}
@@ -77,8 +83,11 @@ class {{classname}}(BaseModel):
         allow_population_by_field_name = True
 
 
+{{/isModel}}
+
 {{classname}}.update_forward_refs()
 {{/isEnum}}
+
 
 {{/model}}
 {{/models}}
