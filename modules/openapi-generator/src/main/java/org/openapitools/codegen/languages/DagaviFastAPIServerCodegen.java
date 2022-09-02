@@ -39,6 +39,9 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.stream.Collectors;
+
+import java.util.regex.Pattern;
 
 import static org.openapitools.codegen.utils.StringUtils.underscore;
 
@@ -249,6 +252,36 @@ public class DagaviFastAPIServerCodegen extends AbstractPythonCodegen {
         return objs;
     }
 
+    private static final Pattern pkgSeparatorPattern = Pattern.compile("\\.");
+    private static final Pattern dollarPattern = Pattern.compile("\\$");
+
+    String toEnumVarName(final String enumValue) {
+        String result = enumValue.toUpperCase();
+
+        result = sanitizeName(result);
+
+        // Replace package separator with slash.
+        result = pkgSeparatorPattern.matcher(result).replaceAll("/");
+
+        // Replace $ with two underscores for inner classes.
+        result = dollarPattern.matcher(result).replaceAll("__");
+
+        result = result.replace('-', '_');
+
+        // replace space with underscore
+        result = result.replace(' ', '_');
+
+        // remove leading underscore
+        result = result.replaceAll("^_*", "");
+
+        // for reserved word or word starting with number, append _
+        if (isReservedWord(result) || result.matches("^\\d.*")) {
+            result = escapeReservedWord(result);
+        }
+
+        return result;
+    }
+
     @Override
     public Map<String, ModelsMap> postProcessAllModels(Map<String, ModelsMap> objs) {
         Map<String, ModelsMap> result = super.postProcessAllModels(objs);
@@ -257,6 +290,19 @@ public class DagaviFastAPIServerCodegen extends AbstractPythonCodegen {
                 CodegenModel cm = mo.getModel();
                 // Add additional filename information for imports
                 mo.put("pyImports", toPyImports(cm, cm.imports));
+
+                Map<String, Object> allowable = cm.getAllowableValues();
+                if (allowable != null) {
+                    List<String> allowableValues = (List<String>) allowable.get("values");
+                    List<Map<String, String>> keysForValues = allowableValues.stream().map((t) -> {
+                        String s = (String) t;
+                        HashMap<String, String> enumElement = new HashMap<>();
+                        enumElement.put("key", toEnumVarName(s));
+                        enumElement.put("value", s);
+                        return enumElement;
+                    }).collect(Collectors.toList());
+                    allowable.put("elements", keysForValues);
+                }
             }
         }
         return result;
