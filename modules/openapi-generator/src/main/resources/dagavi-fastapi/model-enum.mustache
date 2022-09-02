@@ -5,7 +5,7 @@ class {{classname}}(str, Enum):
     {{description}}
     """
 {{#allowableValues}}
-{{#values}}
-    {{.}} = "{{.}}"
-{{/values}}
+{{#elements}}
+    {{key}} = "{{value}}"
+{{/elements}}
 {{/allowableValues}}
