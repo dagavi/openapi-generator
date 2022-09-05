@@ -27,7 +27,7 @@ router = APIRouter()
 import pydantic
 from typing import Any
 from pydantic import Json, ValidationError
-from fastapi import Depends, HTTPException
+from fastapi import HTTPException
 
 def json_parameter(model: Any, required: bool = False, **query_kwargs):
     """Parse JSON-encoded query parameters as pydantic models.
