@@ -13,6 +13,8 @@
 import unittest
 from decimal import Decimal
 
+import frozendict
+
 import petstore_api
 from petstore_api.schemas import (
     AnyTypeSchema,
@@ -27,7 +29,6 @@ from petstore_api.schemas import (
     DateTimeSchema,
     DecimalSchema,
     ComposedSchema,
-    frozendict,
     NoneClass,
     BoolClass
 )
@@ -47,8 +48,8 @@ class TestAnyTypeSchema(unittest.TestCase):
         assert isinstance(m, Model)
         assert isinstance(m, AnyTypeSchema)
         assert isinstance(m, DictSchema)
-        assert isinstance(m, frozendict)
-        assert m == frozendict(a=Decimal(1), b='hi')
+        assert isinstance(m, frozendict.frozendict)
+        assert m == frozendict.frozendict(a=Decimal(1), b='hi')
 
     def testListSchema(self):
         class Model(ComposedSchema):
@@ -156,7 +157,7 @@ class TestAnyTypeSchema(unittest.TestCase):
         assert isinstance(m, AnyTypeSchema)
         assert isinstance(m, NoneSchema)
         assert isinstance(m, NoneClass)
-        self.assertTrue(m.is_none())
+        self.assertTrue(m.is_none_oapg())
 
     def testDateSchema(self):
         class Model(ComposedSchema):
@@ -202,7 +203,7 @@ class TestAnyTypeSchema(unittest.TestCase):
         assert isinstance(m, DecimalSchema)
         assert isinstance(m, str)
         assert m == '12.34'
-        assert m.as_decimal == Decimal('12.34')
+        assert m.as_decimal_oapg == Decimal('12.34')
 
 
 if __name__ == '__main__':

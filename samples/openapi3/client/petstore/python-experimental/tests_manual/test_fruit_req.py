@@ -16,7 +16,7 @@ import petstore_api
 from petstore_api.model import apple_req
 from petstore_api.model import banana_req
 from petstore_api.model.fruit_req import FruitReq
-from petstore_api.schemas import NoneSchema, Singleton
+from petstore_api import schemas
 
 
 class TestFruitReq(unittest.TestCase):
@@ -58,6 +58,9 @@ class TestFruitReq(unittest.TestCase):
         # with a key
         with self.assertRaises(KeyError):
             fruit['cultivar']
+        with self.assertRaises(AttributeError):
+            fruit.cultivar
+        assert fruit.get_item_oapg('cultivar') is schemas.unset
 
         # with getattr
         self.assertEqual(getattr(fruit, 'cultivar', 'some value'), 'some value')
@@ -66,11 +69,10 @@ class TestFruitReq(unittest.TestCase):
             getattr(fruit, 'cultivar')
 
         # make sure that the ModelComposed class properties are correct
-        # model._composed_schemas stores the anyOf/allOf/oneOf info
         self.assertEqual(
-            fruit.MetaOapg.one_of,
+            FruitReq.MetaOapg.one_of,
             [
-                NoneSchema,
+                schemas.NoneSchema,
                 apple_req.AppleReq,
                 banana_req.BananaReq,
             ],
@@ -108,10 +110,10 @@ class TestFruitReq(unittest.TestCase):
 
         # we can pass in None
         fruit = FruitReq(None)
-        assert isinstance(fruit, Singleton)
+        assert isinstance(fruit, schemas.Singleton)
         assert isinstance(fruit, FruitReq)
-        assert isinstance(fruit, NoneSchema)
-        assert fruit.is_none() is True
+        assert isinstance(fruit, schemas.NoneSchema)
+        assert fruit.is_none_oapg() is True
 
 
 if __name__ == '__main__':

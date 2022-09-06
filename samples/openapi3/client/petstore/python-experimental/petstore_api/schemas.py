@@ -19,7 +19,7 @@ import typing
 import uuid
 
 from dateutil.parser.isoparser import isoparser, _takes_ascii
-from frozendict import frozendict
+import frozendict
 
 from petstore_api.exceptions import (
     ApiTypeError,
@@ -71,15 +71,13 @@ def update(d: dict, u: dict):
     if not u:
         return d
     for k, v in u.items():
-        if not v:
-            continue
         if k not in d:
             d[k] = v
         else:
             d[k] = d[k] | v
 
 
-class ValidationMetadata(frozendict):
+class ValidationMetadata(frozendict.frozendict):
     """
     A class storing metadata that is needed to validate OpenApi Schema payloads
     """
@@ -89,7 +87,7 @@ class ValidationMetadata(frozendict):
         from_server: bool = False,
         configuration: typing.Optional[Configuration] = None,
         seen_classes: typing.FrozenSet[typing.Type] = frozenset(),
-        validated_path_to_schemas: typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set['Schema']] = frozendict()
+        validated_path_to_schemas: typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Type]] = frozendict.frozendict()
     ):
         """
         Args:
@@ -145,7 +143,7 @@ class ValidationMetadata(frozendict):
         return self.get('seen_classes')
 
     @property
-    def validated_path_to_schemas(self) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set['Schema']]:
+    def validated_path_to_schemas(self) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Type]]:
         return self.get('validated_path_to_schemas')
 
 
@@ -214,9 +212,362 @@ class BoolClass(Singleton):
         raise ValueError('Unable to find the boolean value of this instance')
 
 
+class MetaOapgTyped:
+    exclusive_maximum: typing.Union[int, float]
+    inclusive_maximum: typing.Union[int, float]
+    exclusive_minimum: typing.Union[int, float]
+    inclusive_minimum: typing.Union[int, float]
+    max_items: int
+    min_items: int
+    discriminator: typing.Dict[str, typing.Dict[str, typing.Type['Schema']]]
+
+
+    class properties:
+        # to hold object properties
+        pass
+
+    additional_properties: typing.Optional[typing.Type['Schema']]
+    max_properties: int
+    min_properties: int
+    all_of: typing.List[typing.Type['Schema']]
+    one_of: typing.List[typing.Type['Schema']]
+    any_of: typing.List[typing.Type['Schema']]
+    not_schema: typing.Type['Schema']
+    max_length: int
+    min_length: int
+    items: typing.Type['Schema']
+
+
+class Schema:
+    """
+    the base class of all swagger/openapi schemas/models
+    """
+    __inheritable_primitive_types_set = {decimal.Decimal, str, tuple, frozendict.frozendict, FileIO, bytes, BoolClass, NoneClass}
+    MetaOapg = MetaOapgTyped
+
+    @classmethod
+    def _validate_oapg(
+        cls,
+        arg,
+        validation_metadata: ValidationMetadata,
+    ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict.frozendict, tuple]]]:
+        """
+        Schema _validate_oapg
+        Runs all schema validation logic and
+        returns a dynamic class of different bases depending upon the input
+        This makes it so:
+        - the returned instance is always a subclass of our defining schema
+            - this allows us to check type based on whether an instance is a subclass of a schema
+        - the returned instance is a serializable type (except for None, True, and False) which are enums
+
+        Use cases:
+        1. inheritable type: string/decimal.Decimal/frozendict.frozendict/tuple
+        2. singletons: bool/None -> uses the base classes BoolClass/NoneClass
+
+        Required Steps:
+        1. verify type of input is valid vs the allowed _types
+        2. check validations that are applicable for this type of input
+        3. if enums exist, check that the value exists in the enum
+
+        Returns:
+            path_to_schemas: a map of path to schemas
+
+        Raises:
+            ApiValueError: when a string can't be converted into a date or datetime and it must be one of those classes
+            ApiTypeError: when the input type is not in the list of allowed spec types
+        """
+        base_class = type(arg)
+        path_to_schemas = {validation_metadata.path_to_item: set()}
+        path_to_schemas[validation_metadata.path_to_item].add(cls)
+        path_to_schemas[validation_metadata.path_to_item].add(base_class)
+        return path_to_schemas
+
+    @staticmethod
+    def _process_schema_classes_oapg(
+        schema_classes: typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict.frozendict, tuple]]
+    ):
+        """
+        Processes and mutates schema_classes
+        If a SomeSchema is a subclass of DictSchema then remove DictSchema because it is already included
+        """
+        if len(schema_classes) < 2:
+            return
+        if len(schema_classes) > 2 and UnsetAnyTypeSchema in schema_classes:
+            schema_classes.remove(UnsetAnyTypeSchema)
+        x_schema = schema_type_classes & schema_classes
+        if not x_schema:
+            return
+        x_schema = x_schema.pop()
+        if any(c is not x_schema and issubclass(c, x_schema) for c in schema_classes):
+            # needed to not have a mro error in get_new_class
+            schema_classes.remove(x_schema)
+
+    @classmethod
+    def __get_new_cls(
+        cls,
+        arg,
+        validation_metadata: ValidationMetadata
+    ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Type['Schema']]:
+        """
+        Make a new dynamic class and return an instance of that class
+        We are making an instance of cls, but instead of making cls
+        make a new class, new_cls
+        which includes dynamic bases including cls
+        return an instance of that new class
+
+        Dict property + List Item Assignment Use cases:
+        1. value is NOT an instance of the required schema class
+            the value is validated by _validate_oapg
+            _validate_oapg returns a key value pair
+            where the key is the path to the item, and the value will be the required manufactured class
+            made out of the matching schemas
+        2. value is an instance of the the correct schema type
+            the value is NOT validated by _validate_oapg, _validate_oapg only checks that the instance is of the correct schema type
+            for this value, _validate_oapg does NOT return an entry for it in _path_to_schemas
+            and in list/dict _get_items_oapg,_get_properties_oapg the value will be directly assigned
+            because value is of the correct type, and validation was run earlier when the instance was created
+        """
+        _path_to_schemas = {}
+        if validation_metadata.validated_path_to_schemas:
+            update(_path_to_schemas, validation_metadata.validated_path_to_schemas)
+        if not validation_metadata.validation_ran_earlier(cls):
+            other_path_to_schemas = cls._validate_oapg(arg, validation_metadata=validation_metadata)
+            update(_path_to_schemas, other_path_to_schemas)
+        # loop through it make a new class for each entry
+        # do not modify the returned result because it is cached and we would be modifying the cached value
+        path_to_schemas = {}
+        for path, schema_classes in _path_to_schemas.items():
+            """
+            Use cases
+            1. N number of schema classes + enum + type != bool/None, classes in path_to_schemas: tuple/frozendict.frozendict/str/Decimal/bytes/FileIo
+                needs Singleton added
+            2. N number of schema classes + enum + type == bool/None, classes in path_to_schemas: BoolClass/NoneClass
+                Singleton already added
+            3. N number of schema classes, classes in path_to_schemas: BoolClass/NoneClass/tuple/frozendict.frozendict/str/Decimal/bytes/FileIo
+            """
+            cls._process_schema_classes_oapg(schema_classes)
+            enum_schema = any(
+                hasattr(this_cls, '_enum_value_to_name') for this_cls in schema_classes)
+            inheritable_primitive_type = schema_classes.intersection(cls.__inheritable_primitive_types_set)
+            chosen_schema_classes = schema_classes - inheritable_primitive_type
+            suffix = tuple(inheritable_primitive_type)
+            if enum_schema and suffix[0] not in {NoneClass, BoolClass}:
+                suffix = (Singleton,) + suffix
+
+            used_classes = tuple(sorted(chosen_schema_classes, key=lambda a_cls: a_cls.__name__)) + suffix
+            mfg_cls = get_new_class(class_name='DynamicSchema', bases=used_classes)
+            path_to_schemas[path] = mfg_cls
+
+        return path_to_schemas
+
+    @classmethod
+    def _get_new_instance_without_conversion_oapg(
+        cls,
+        arg: typing.Any,
+        path_to_item: typing.Tuple[typing.Union[str, int], ...],
+        path_to_schemas: typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Type['Schema']]
+    ):
+        # We have a Dynamic class and we are making an instance of it
+        if issubclass(cls, frozendict.frozendict) and issubclass(cls, DictBase):
+            properties = cls._get_properties_oapg(arg, path_to_item, path_to_schemas)
+            return super(Schema, cls).__new__(cls, properties)
+        elif issubclass(cls, tuple) and issubclass(cls, ListBase):
+            items = cls._get_items_oapg(arg, path_to_item, path_to_schemas)
+            return super(Schema, cls).__new__(cls, items)
+        """
+        str = openapi str, date, and datetime
+        decimal.Decimal = openapi int and float
+        FileIO = openapi binary type and the user inputs a file
+        bytes = openapi binary type and the user inputs bytes
+        """
+        return super(Schema, cls).__new__(cls, arg)
+
+    @classmethod
+    def from_openapi_data_oapg(
+        cls,
+        arg: typing.Union[
+            str,
+            date,
+            datetime,
+            int,
+            float,
+            decimal.Decimal,
+            bool,
+            None,
+            'Schema',
+            dict,
+            frozendict.frozendict,
+            tuple,
+            list,
+            io.FileIO,
+            io.BufferedReader,
+            bytes
+        ],
+        _configuration: typing.Optional[Configuration]
+    ):
+        """
+        Schema from_openapi_data_oapg
+        """
+        from_server = True
+        validated_path_to_schemas = {}
+        arg = cast_to_allowed_types(arg, from_server, validated_path_to_schemas)
+        validation_metadata = ValidationMetadata(
+            from_server=from_server, configuration=_configuration, validated_path_to_schemas=validated_path_to_schemas)
+        path_to_schemas = cls.__get_new_cls(arg, validation_metadata)
+        new_cls = path_to_schemas[validation_metadata.path_to_item]
+        new_inst = new_cls._get_new_instance_without_conversion_oapg(
+            arg,
+            validation_metadata.path_to_item,
+            path_to_schemas
+        )
+        return new_inst
+
+    @staticmethod
+    def __get_input_dict(*args, **kwargs) -> frozendict.frozendict:
+        input_dict = {}
+        if args and isinstance(args[0], (dict, frozendict.frozendict)):
+            input_dict.update(args[0])
+        if kwargs:
+            input_dict.update(kwargs)
+        return frozendict.frozendict(input_dict)
+
+    @staticmethod
+    def __remove_unsets(kwargs):
+        return {key: val for key, val in kwargs.items() if val is not unset}
+
+    def __new__(cls, *args: typing.Union[dict, frozendict.frozendict, list, tuple, decimal.Decimal, float, int, str, date, datetime, bool, None, 'Schema'], _configuration: typing.Optional[Configuration] = None, **kwargs: typing.Union[dict, frozendict.frozendict, list, tuple, decimal.Decimal, float, int, str, date, datetime, bool, None, 'Schema', Unset]):
+        """
+        Schema __new__
+
+        Args:
+            args (int/float/decimal.Decimal/str/list/tuple/dict/frozendict.frozendict/bool/None): the value
+            kwargs (str, int/float/decimal.Decimal/str/list/tuple/dict/frozendict.frozendict/bool/None): dict values
+            _configuration: contains the Configuration that enables json schema validation keywords
+                like minItems, minLength etc
+
+        Note: double underscores are used here because pycharm thinks that these variables
+        are instance properties if they are named normally :(
+        """
+        __kwargs = cls.__remove_unsets(kwargs)
+        if not args and not __kwargs:
+            raise TypeError(
+                'No input given. args or kwargs must be given.'
+            )
+        if not __kwargs and args and not isinstance(args[0], dict):
+            __arg = args[0]
+        else:
+            __arg = cls.__get_input_dict(*args, **__kwargs)
+        __from_server = False
+        __validated_path_to_schemas = {}
+        __arg = cast_to_allowed_types(
+            __arg, __from_server, __validated_path_to_schemas)
+        __validation_metadata = ValidationMetadata(
+            configuration=_configuration, from_server=__from_server, validated_path_to_schemas=__validated_path_to_schemas)
+        __path_to_schemas = cls.__get_new_cls(__arg, __validation_metadata)
+        __new_cls = __path_to_schemas[__validation_metadata.path_to_item]
+        return __new_cls._get_new_instance_without_conversion_oapg(
+            __arg,
+            __validation_metadata.path_to_item,
+            __path_to_schemas
+        )
+
+    def __init__(
+        self,
+        *args: typing.Union[
+            dict, frozendict.frozendict, list, tuple, decimal.Decimal, float, int, str, date, datetime, bool, None, 'Schema'],
+        _configuration: typing.Optional[Configuration] = None,
+        **kwargs: typing.Union[
+            dict, frozendict.frozendict, list, tuple, decimal.Decimal, float, int, str, date, datetime, bool, None, 'Schema', Unset
+        ]
+    ):
+        """
+        this is needed to fix 'Unexpected argument' warning in pycharm
+        this code does nothing because all Schema instances are immutable
+        this means that all input data is passed into and used in new, and after the new instance is made
+        no new attributes are assigned and init is not used
+        """
+        pass
+
+"""
+import itertools
+data_types = ('None', 'FrozenDict', 'Tuple', 'Str', 'Decimal', 'Bool')
+[v for v in itertools.combinations(data_types, 2)]
+"""
+if typing.TYPE_CHECKING:
+    # qty 1 mixin
+    NoneMixin = NoneClass
+    FrozenDictMixin = frozendict.frozendict
+    TupleMixin = tuple
+    StrMixin = str
+    DecimalMixin = decimal.Decimal
+    BoolMixin = BoolClass
+    # qty 2 mixin
+    class BinaryMixin(bytes, FileIO):
+        pass
+    class NoneFrozenDictMixin(NoneClass, frozendict.frozendict):
+        pass
+    class NoneTupleMixin(NoneClass, tuple):
+        pass
+    class NoneStrMixin(NoneClass, str):
+        pass
+    class NoneDecimalMixin(NoneClass, decimal.Decimal):
+        pass
+    class NoneBoolMixin(NoneClass, BoolClass):
+        pass
+    class FrozenDictTupleMixin(frozendict.frozendict, tuple):
+        pass
+    class FrozenDictStrMixin(frozendict.frozendict, str):
+        pass
+    class FrozenDictDecimalMixin(frozendict.frozendict, decimal.Decimal):
+        pass
+    class FrozenDictBoolMixin(frozendict.frozendict, BoolClass):
+        pass
+    class TupleStrMixin(tuple, str):
+        pass
+    class TupleDecimalMixin(tuple, decimal.Decimal):
+        pass
+    class TupleBoolMixin(tuple, BoolClass):
+        pass
+    class StrDecimalMixin(str, decimal.Decimal):
+        pass
+    class StrBoolMixin(str, BoolClass):
+        pass
+    class DecimalBoolMixin(decimal.Decimal, BoolClass):
+        pass
+    # qty 6
+    class NoneFrozenDictTupleStrDecimalBoolMixin(NoneClass, frozendict.frozendict, tuple, str, decimal.Decimal, BoolClass):
+        pass
+else:
+    # qty 1 mixin
+    NoneMixin = object
+    FrozenDictMixin = object
+    TupleMixin = object
+    StrMixin = object
+    DecimalMixin = object
+    BoolMixin = object
+    # qty 2 mixin
+    BinaryMixin = object
+    NoneFrozenDictMixin = object
+    NoneTupleMixin = object
+    NoneStrMixin = object
+    NoneDecimalMixin = object
+    NoneBoolMixin = object
+    FrozenDictTupleMixin = object
+    FrozenDictStrMixin = object
+    FrozenDictDecimalMixin = object
+    FrozenDictBoolMixin = object
+    TupleStrMixin = object
+    TupleDecimalMixin = object
+    TupleBoolMixin = object
+    StrDecimalMixin = object
+    StrBoolMixin = object
+    DecimalBoolMixin = object
+    NoneFrozenDictTupleStrDecimalBoolMixin = object
+
+
 class ValidatorBase:
     @staticmethod
-    def is_json_validation_enabled_oapg(schema_keyword, configuration=None):
+    def _is_json_validation_enabled_oapg(schema_keyword, configuration=None):
         """Returns true if JSON schema validation is enabled for the specified
         validation keyword. This can be used to skip JSON schema structural validation
         as requested in the configuration.
@@ -233,7 +584,7 @@ class ValidatorBase:
             schema_keyword not in configuration._disabled_client_side_validations)
 
     @staticmethod
-    def raise_validation_error_message_oapg(value, constraint_msg, constraint_value, path_to_item, additional_txt=""):
+    def _raise_validation_errror_message_oapg(value, constraint_msg, constraint_value, path_to_item, additional_txt=""):
         raise ApiValueError(
             "Invalid value `{value}`, {constraint_msg} `{constraint_value}`{additional_txt} at {path_to_item}".format(
                 value=value,
@@ -247,11 +598,11 @@ class ValidatorBase:
 
 class Validator(typing.Protocol):
     @classmethod
-    def _validate(
+    def _validate_oapg(
         cls,
         arg,
         validation_metadata: ValidationMetadata,
-    ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict, tuple]]]:
+    ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict.frozendict, tuple]]]:
         pass
 
 
@@ -304,7 +655,7 @@ def SchemaTypeCheckerClsFactory(union_type_cls: typing.Union[typing.Any]) -> Val
             return msg
 
         @classmethod
-        def _get_type_error(cls, var_value, path_to_item, valid_classes, key_type=False):
+        def __get_type_error(cls, var_value, path_to_item, valid_classes, key_type=False):
             error_msg = cls.__type_error_message(
                 var_name=path_to_item[-1],
                 var_value=var_value,
@@ -319,19 +670,19 @@ def SchemaTypeCheckerClsFactory(union_type_cls: typing.Union[typing.Any]) -> Val
             )
 
         @classmethod
-        def _validate(
+        def _validate_oapg(
             cls,
             arg,
             validation_metadata: ValidationMetadata,
-        ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict, tuple]]]:
+        ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict.frozendict, tuple]]]:
             """
-            SchemaTypeChecker _validate
+            SchemaTypeChecker _validate_oapg
             Validates arg's type
             """
             arg_type = type(arg)
             if arg_type in union_classes:
-                return super()._validate(arg, validation_metadata=validation_metadata)
-            raise cls._get_type_error(
+                return super()._validate_oapg(arg, validation_metadata=validation_metadata)
+            raise cls.__get_type_error(
                 arg,
                 validation_metadata.path_to_item,
                 union_classes,
@@ -370,26 +721,26 @@ def SchemaEnumMakerClsFactory(enum_value_to_name: typing.Dict[typing.Union[str, 
             return intersection
 
         @classmethod
-        def _validate(
+        def _validate_oapg(
             cls,
             arg,
             validation_metadata: ValidationMetadata,
-        ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict, tuple]]]:
+        ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict.frozendict, tuple]]]:
             """
-            SchemaEnumMaker _validate
+            SchemaEnumMaker _validate_oapg
             Validates that arg is in the enum's allowed values
             """
             try:
                 cls._enum_value_to_name[arg]
             except KeyError:
                 raise ApiValueError("Invalid value {} passed in to {}, {}".format(arg, cls, cls._enum_value_to_name))
-            return super()._validate(arg, validation_metadata=validation_metadata)
+            return super()._validate_oapg(arg, validation_metadata=validation_metadata)
 
     return SchemaEnumMaker
 
 
 class BoolBase:
-    def is_true(self) -> bool:
+    def is_true_oapg(self) -> bool:
         """
         A replacement for x is True
         True if the instance is a BoolClass True Singleton
@@ -398,7 +749,7 @@ class BoolBase:
             return False
         return bool(self)
 
-    def is_false(self) -> bool:
+    def is_false_oapg(self) -> bool:
         """
         A replacement for x is False
         True if the instance is a BoolClass False Singleton
@@ -409,7 +760,7 @@ class BoolBase:
 
 
 class NoneBase:
-    def is_none(self) -> bool:
+    def is_none_oapg(self) -> bool:
         """
         A replacement for x is None
         True if the instance is a NoneClass None Singleton
@@ -420,24 +771,26 @@ class NoneBase:
 
 
 class StrBase(ValidatorBase):
+    MetaOapg: MetaOapgTyped
+
     @property
-    def as_str(self) -> str:
+    def as_str_oapg(self) -> str:
         return self
 
     @property
-    def as_date(self) -> date:
+    def as_date_oapg(self) -> date:
         raise Exception('not implemented')
 
     @property
-    def as_datetime(self) -> datetime:
+    def as_datetime_oapg(self) -> datetime:
         raise Exception('not implemented')
 
     @property
-    def as_decimal(self) -> decimal.Decimal:
+    def as_decimal_oapg(self) -> decimal.Decimal:
         raise Exception('not implemented')
 
     @property
-    def as_uuid(self) -> uuid.UUID:
+    def as_uuid_oapg(self) -> uuid.UUID:
         raise Exception('not implemented')
 
     @classmethod
@@ -448,27 +801,27 @@ class StrBase(ValidatorBase):
     ):
         if not hasattr(cls, 'MetaOapg'):
             return
-        if (cls.is_json_validation_enabled_oapg('maxLength', validation_metadata.configuration) and
+        if (cls._is_json_validation_enabled_oapg('maxLength', validation_metadata.configuration) and
                 hasattr(cls.MetaOapg, 'max_length') and
                 len(arg) > cls.MetaOapg.max_length):
-            cls.raise_validation_error_message_oapg(
+            cls._raise_validation_errror_message_oapg(
                 value=arg,
                 constraint_msg="length must be less than or equal to",
                 constraint_value=cls.MetaOapg.max_length,
                 path_to_item=validation_metadata.path_to_item
             )
 
-        if (cls.is_json_validation_enabled_oapg('minLength', validation_metadata.configuration) and
+        if (cls._is_json_validation_enabled_oapg('minLength', validation_metadata.configuration) and
                 hasattr(cls.MetaOapg, 'min_length') and
                 len(arg) < cls.MetaOapg.min_length):
-            cls.raise_validation_error_message_oapg(
+            cls._raise_validation_errror_message_oapg(
                 value=arg,
                 constraint_msg="length must be greater than or equal to",
                 constraint_value=cls.MetaOapg.min_length,
                 path_to_item=validation_metadata.path_to_item
             )
 
-        if (cls.is_json_validation_enabled_oapg('pattern', validation_metadata.configuration) and
+        if (cls._is_json_validation_enabled_oapg('pattern', validation_metadata.configuration) and
                 hasattr(cls.MetaOapg, 'regex')):
             for regex_dict in cls.MetaOapg.regex:
                 flags = regex_dict.get('flags', 0)
@@ -476,14 +829,14 @@ class StrBase(ValidatorBase):
                     if flags != 0:
                         # Don't print the regex flags if the flags are not
                         # specified in the OAS document.
-                        cls.raise_validation_error_message_oapg(
+                        cls._raise_validation_errror_message_oapg(
                             value=arg,
                             constraint_msg="must match regular expression",
                             constraint_value=regex_dict['pattern'],
                             path_to_item=validation_metadata.path_to_item,
                             additional_txt=" with flags=`{}`".format(flags)
                         )
-                    cls.raise_validation_error_message_oapg(
+                    cls._raise_validation_errror_message_oapg(
                         value=arg,
                         constraint_msg="must match regular expression",
                         constraint_value=regex_dict['pattern'],
@@ -491,28 +844,28 @@ class StrBase(ValidatorBase):
                     )
 
     @classmethod
-    def _validate(
+    def _validate_oapg(
         cls,
         arg,
         validation_metadata: ValidationMetadata,
-    ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict, tuple]]]:
+    ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict.frozendict, tuple]]]:
         """
-        StrBase _validate
+        StrBase _validate_oapg
         Validates that validations pass
         """
         if isinstance(arg, str):
             cls.__check_str_validations(arg, validation_metadata)
-        return super()._validate(arg, validation_metadata=validation_metadata)
+        return super()._validate_oapg(arg, validation_metadata=validation_metadata)
 
 
 class UUIDBase(StrBase):
     @property
     @functools.cache
-    def as_uuid(self) -> uuid.UUID:
+    def as_uuid_oapg(self) -> uuid.UUID:
         return uuid.UUID(self)
 
     @classmethod
-    def _validate_format(cls, arg: typing.Optional[str], validation_metadata: ValidationMetadata):
+    def __validate_format(cls, arg: typing.Optional[str], validation_metadata: ValidationMetadata):
         if isinstance(arg, str):
             try:
                 uuid.UUID(arg)
@@ -523,16 +876,16 @@ class UUIDBase(StrBase):
                 )
 
     @classmethod
-    def _validate(
+    def _validate_oapg(
         cls,
         arg,
         validation_metadata: typing.Optional[ValidationMetadata] = None,
     ):
         """
-        UUIDBase _validate
+        UUIDBase _validate_oapg
         """
-        cls._validate_format(arg, validation_metadata=validation_metadata)
-        return super()._validate(arg, validation_metadata=validation_metadata)
+        cls.__validate_format(arg, validation_metadata=validation_metadata)
+        return super()._validate_oapg(arg, validation_metadata=validation_metadata)
 
 
 class CustomIsoparser(isoparser):
@@ -574,11 +927,11 @@ DEFAULT_ISOPARSER = CustomIsoparser()
 class DateBase(StrBase):
     @property
     @functools.cache
-    def as_date(self) -> date:
+    def as_date_oapg(self) -> date:
         return DEFAULT_ISOPARSER.parse_isodate(self)
 
     @classmethod
-    def _validate_format(cls, arg: typing.Optional[str], validation_metadata: ValidationMetadata):
+    def __validate_format(cls, arg: typing.Optional[str], validation_metadata: ValidationMetadata):
         if isinstance(arg, str):
             try:
                 DEFAULT_ISOPARSER.parse_isodate(arg)
@@ -590,26 +943,26 @@ class DateBase(StrBase):
                 )
 
     @classmethod
-    def _validate(
+    def _validate_oapg(
         cls,
         arg,
         validation_metadata: typing.Optional[ValidationMetadata] = None,
     ):
         """
-        DateBase _validate
+        DateBase _validate_oapg
         """
-        cls._validate_format(arg, validation_metadata=validation_metadata)
-        return super()._validate(arg, validation_metadata=validation_metadata)
+        cls.__validate_format(arg, validation_metadata=validation_metadata)
+        return super()._validate_oapg(arg, validation_metadata=validation_metadata)
 
 
 class DateTimeBase:
     @property
     @functools.cache
-    def as_datetime(self) -> datetime:
+    def as_datetime_oapg(self) -> datetime:
         return DEFAULT_ISOPARSER.parse_isodatetime(self)
 
     @classmethod
-    def _validate_format(cls, arg: typing.Optional[str], validation_metadata: ValidationMetadata):
+    def __validate_format(cls, arg: typing.Optional[str], validation_metadata: ValidationMetadata):
         if isinstance(arg, str):
             try:
                 DEFAULT_ISOPARSER.parse_isodatetime(arg)
@@ -621,16 +974,16 @@ class DateTimeBase:
                 )
 
     @classmethod
-    def _validate(
+    def _validate_oapg(
         cls,
         arg,
         validation_metadata: ValidationMetadata,
     ):
         """
-        DateTimeBase _validate
+        DateTimeBase _validate_oapg
         """
-        cls._validate_format(arg, validation_metadata=validation_metadata)
-        return super()._validate(arg, validation_metadata=validation_metadata)
+        cls.__validate_format(arg, validation_metadata=validation_metadata)
+        return super()._validate_oapg(arg, validation_metadata=validation_metadata)
 
 
 class DecimalBase(StrBase):
@@ -642,11 +995,11 @@ class DecimalBase(StrBase):
 
     @property
     @functools.cache
-    def as_decimal(self) -> decimal.Decimal:
+    def as_decimal_oapg(self) -> decimal.Decimal:
         return decimal.Decimal(self)
 
     @classmethod
-    def _validate_format(cls, arg: typing.Optional[str], validation_metadata: ValidationMetadata):
+    def __validate_format(cls, arg: typing.Optional[str], validation_metadata: ValidationMetadata):
         if isinstance(arg, str):
             try:
                 decimal.Decimal(arg)
@@ -658,21 +1011,23 @@ class DecimalBase(StrBase):
                 )
 
     @classmethod
-    def _validate(
+    def _validate_oapg(
         cls,
         arg,
         validation_metadata: ValidationMetadata,
     ):
         """
-        DecimalBase _validate
+        DecimalBase _validate_oapg
         """
-        cls._validate_format(arg, validation_metadata=validation_metadata)
-        return super()._validate(arg, validation_metadata=validation_metadata)
+        cls.__validate_format(arg, validation_metadata=validation_metadata)
+        return super()._validate_oapg(arg, validation_metadata=validation_metadata)
 
 
 class NumberBase(ValidatorBase):
+    MetaOapg: MetaOapgTyped
+
     @property
-    def as_int(self) -> int:
+    def as_int_oapg(self) -> int:
         try:
             return self._as_int
         except AttributeError:
@@ -692,7 +1047,7 @@ class NumberBase(ValidatorBase):
             return self._as_int
 
     @property
-    def as_float(self) -> float:
+    def as_float_oapg(self) -> float:
         try:
             return self._as_float
         except AttributeError:
@@ -709,12 +1064,12 @@ class NumberBase(ValidatorBase):
     ):
         if not hasattr(cls, 'MetaOapg'):
             return
-        if cls.is_json_validation_enabled_oapg('multipleOf',
+        if cls._is_json_validation_enabled_oapg('multipleOf',
                                       validation_metadata.configuration) and hasattr(cls.MetaOapg, 'multiple_of'):
             multiple_of_value = cls.MetaOapg.multiple_of
             if (not (float(arg) / multiple_of_value).is_integer()):
                 # Note 'multipleOf' will be as good as the floating point arithmetic.
-                cls.raise_validation_error_message_oapg(
+                cls._raise_validation_errror_message_oapg(
                     value=arg,
                     constraint_msg="value must be a multiple of",
                     constraint_value=multiple_of_value,
@@ -732,40 +1087,40 @@ class NumberBase(ValidatorBase):
         if not checking_max_or_min_values:
             return
 
-        if (cls.is_json_validation_enabled_oapg('exclusiveMaximum', validation_metadata.configuration) and
+        if (cls._is_json_validation_enabled_oapg('exclusiveMaximum', validation_metadata.configuration) and
                 hasattr(cls.MetaOapg, 'exclusive_maximum') and
                 arg >= cls.MetaOapg.exclusive_maximum):
-            cls.raise_validation_error_message_oapg(
+            cls._raise_validation_errror_message_oapg(
                 value=arg,
                 constraint_msg="must be a value less than",
                 constraint_value=cls.MetaOapg.exclusive_maximum,
                 path_to_item=validation_metadata.path_to_item
             )
 
-        if (cls.is_json_validation_enabled_oapg('maximum', validation_metadata.configuration) and
+        if (cls._is_json_validation_enabled_oapg('maximum', validation_metadata.configuration) and
                 hasattr(cls.MetaOapg, 'inclusive_maximum') and
                 arg > cls.MetaOapg.inclusive_maximum):
-            cls.raise_validation_error_message_oapg(
+            cls._raise_validation_errror_message_oapg(
                 value=arg,
                 constraint_msg="must be a value less than or equal to",
                 constraint_value=cls.MetaOapg.inclusive_maximum,
                 path_to_item=validation_metadata.path_to_item
             )
 
-        if (cls.is_json_validation_enabled_oapg('exclusiveMinimum', validation_metadata.configuration) and
+        if (cls._is_json_validation_enabled_oapg('exclusiveMinimum', validation_metadata.configuration) and
                 hasattr(cls.MetaOapg, 'exclusive_minimum') and
                 arg <= cls.MetaOapg.exclusive_minimum):
-            cls.raise_validation_error_message_oapg(
+            cls._raise_validation_errror_message_oapg(
                 value=arg,
                 constraint_msg="must be a value greater than",
                 constraint_value=cls.MetaOapg.exclusive_maximum,
                 path_to_item=validation_metadata.path_to_item
             )
 
-        if (cls.is_json_validation_enabled_oapg('minimum', validation_metadata.configuration) and
+        if (cls._is_json_validation_enabled_oapg('minimum', validation_metadata.configuration) and
                 hasattr(cls.MetaOapg, 'inclusive_minimum') and
                 arg < cls.MetaOapg.inclusive_minimum):
-            cls.raise_validation_error_message_oapg(
+            cls._raise_validation_errror_message_oapg(
                 value=arg,
                 constraint_msg="must be a value greater than or equal to",
                 constraint_value=cls.MetaOapg.inclusive_minimum,
@@ -773,23 +1128,25 @@ class NumberBase(ValidatorBase):
             )
 
     @classmethod
-    def _validate(
+    def _validate_oapg(
         cls,
         arg,
         validation_metadata: ValidationMetadata,
-    ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict, tuple]]]:
+    ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict.frozendict, tuple]]]:
         """
-        NumberBase _validate
+        NumberBase _validate_oapg
         Validates that validations pass
         """
         if isinstance(arg, decimal.Decimal):
             cls.__check_numeric_validations(arg, validation_metadata)
-        return super()._validate(arg, validation_metadata=validation_metadata)
+        return super()._validate_oapg(arg, validation_metadata=validation_metadata)
 
 
 class ListBase(ValidatorBase):
+    MetaOapg: MetaOapgTyped
+
     @classmethod
-    def _validate_items(cls, list_items, validation_metadata: ValidationMetadata):
+    def __validate_items(cls, list_items, validation_metadata: ValidationMetadata):
         """
         Ensures that:
         - values passed in for items are valid
@@ -805,7 +1162,7 @@ class ListBase(ValidatorBase):
 
         # if we have definitions for an items schema, use it
         # otherwise accept anything
-        item_cls = getattr(cls, '_items', AnyTypeSchema)
+        item_cls = getattr(cls.MetaOapg, 'items', UnsetAnyTypeSchema)
         path_to_schemas = {}
         for i, value in enumerate(list_items):
             item_validation_metadata = ValidationMetadata(
@@ -816,7 +1173,7 @@ class ListBase(ValidatorBase):
             )
             if item_validation_metadata.validation_ran_earlier(item_cls):
                 continue
-            other_path_to_schemas = item_cls._validate(
+            other_path_to_schemas = item_cls._validate_oapg(
                 value, validation_metadata=item_validation_metadata)
             update(path_to_schemas, other_path_to_schemas)
         return path_to_schemas
@@ -827,31 +1184,31 @@ class ListBase(ValidatorBase):
             validation_metadata: ValidationMetadata):
         if not hasattr(cls, 'MetaOapg'):
             return
-        if (cls.is_json_validation_enabled_oapg('maxItems', validation_metadata.configuration) and
+        if (cls._is_json_validation_enabled_oapg('maxItems', validation_metadata.configuration) and
                 hasattr(cls.MetaOapg, 'max_items') and
                 len(arg) > cls.MetaOapg.max_items):
-            cls.raise_validation_error_message_oapg(
+            cls._raise_validation_errror_message_oapg(
                 value=arg,
                 constraint_msg="number of items must be less than or equal to",
                 constraint_value=cls.MetaOapg.max_items,
                 path_to_item=validation_metadata.path_to_item
             )
 
-        if (cls.is_json_validation_enabled_oapg('minItems', validation_metadata.configuration) and
+        if (cls._is_json_validation_enabled_oapg('minItems', validation_metadata.configuration) and
                 hasattr(cls.MetaOapg, 'min_items') and
                 len(arg) < cls.MetaOapg.min_items):
-            cls.raise_validation_error_message_oapg(
+            cls._raise_validation_errror_message_oapg(
                 value=arg,
                 constraint_msg="number of items must be greater than or equal to",
                 constraint_value=cls.MetaOapg.min_items,
                 path_to_item=validation_metadata.path_to_item
             )
 
-        if (cls.is_json_validation_enabled_oapg('uniqueItems', validation_metadata.configuration) and
+        if (cls._is_json_validation_enabled_oapg('uniqueItems', validation_metadata.configuration) and
                 hasattr(cls.MetaOapg, 'unique_items') and cls.MetaOapg.unique_items and arg):
             unique_items = set(arg)
             if len(arg) > len(unique_items):
-                cls.raise_validation_error_message_oapg(
+                cls._raise_validation_errror_message_oapg(
                     value=arg,
                     constraint_msg="duplicate items were found, and the tuple must not contain duplicates because",
                     constraint_value='unique_items==True',
@@ -859,13 +1216,13 @@ class ListBase(ValidatorBase):
                 )
 
     @classmethod
-    def _validate(
+    def _validate_oapg(
         cls,
         arg,
         validation_metadata: ValidationMetadata,
     ):
         """
-        ListBase _validate
+        ListBase _validate_oapg
         We return dynamic classes of different bases depending upon the inputs
         This makes it so:
         - the returned instance is always a subclass of our defining schema
@@ -881,7 +1238,7 @@ class ListBase(ValidatorBase):
         """
         if isinstance(arg, tuple):
             cls.__check_tuple_validations(arg, validation_metadata)
-        _path_to_schemas = super()._validate(arg, validation_metadata=validation_metadata)
+        _path_to_schemas = super()._validate_oapg(arg, validation_metadata=validation_metadata)
         if not isinstance(arg, tuple):
             return _path_to_schemas
         updated_vm = ValidationMetadata(
@@ -891,37 +1248,26 @@ class ListBase(ValidatorBase):
             seen_classes=validation_metadata.seen_classes | frozenset({cls}),
             validated_path_to_schemas=validation_metadata.validated_path_to_schemas
         )
-        other_path_to_schemas = cls._validate_items(arg, validation_metadata=updated_vm)
+        other_path_to_schemas = cls.__validate_items(arg, validation_metadata=updated_vm)
         update(_path_to_schemas, other_path_to_schemas)
         return _path_to_schemas
 
     @classmethod
-    def _get_items(
+    def _get_items_oapg(
         cls: 'Schema',
         arg: typing.List[typing.Any],
         path_to_item: typing.Tuple[typing.Union[str, int], ...],
         path_to_schemas: typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Type['Schema']]
     ):
         '''
-        ListBase _get_items
+        ListBase _get_items_oapg
         '''
-        list_items = arg
         cast_items = []
-        # if we have definitions for an items schema, use it
-        # otherwise accept anything
 
-        cls_item_cls = getattr(cls, '_items', AnyTypeSchema)
-        for i, value in enumerate(list_items):
+        for i, value in enumerate(arg):
             item_path_to_item = path_to_item + (i,)
-            item_cls = path_to_schemas.get(item_path_to_item)
-            if item_cls is None:
-                item_cls = cls_item_cls
-
-            if isinstance(value, item_cls):
-                cast_items.append(value)
-                continue
-
-            new_value = item_cls._get_new_instance_without_conversion(
+            item_cls = path_to_schemas[item_path_to_item]
+            new_value = item_cls._get_new_instance_without_conversion_oapg(
                 value,
                 item_path_to_item,
                 path_to_schemas
@@ -932,8 +1278,10 @@ class ListBase(ValidatorBase):
 
 
 class Discriminable:
+    MetaOapg: MetaOapgTyped
+
     @classmethod
-    def _ensure_discriminator_value_present(cls, disc_property_name: str, validation_metadata: ValidationMetadata, *args):
+    def _ensure_discriminator_value_present_oapg(cls, disc_property_name: str, validation_metadata: ValidationMetadata, *args):
         if not args or args and disc_property_name not in args[0]:
             # The input data does not contain the discriminator property
             raise ApiValueError(
@@ -942,13 +1290,13 @@ class Discriminable:
             )
 
     @classmethod
-    def _get_discriminated_class(cls, disc_property_name: str, disc_payload_value: str):
+    def get_discriminated_class_oapg(cls, disc_property_name: str, disc_payload_value: str):
         """
         Used in schemas with discriminators
         """
-        if not hasattr(cls, '_discriminator'):
+        if not hasattr(cls.MetaOapg, 'discriminator'):
             return None
-        disc = cls._discriminator
+        disc = cls.MetaOapg.discriminator
         if disc_property_name not in disc:
             return None
         discriminated_cls = disc[disc_property_name].get(disc_payload_value)
@@ -964,17 +1312,17 @@ class Discriminable:
             return None
         # TODO stop traveling if a cycle is hit
         for allof_cls in getattr(cls.MetaOapg, 'all_of', []):
-            discriminated_cls = allof_cls._get_discriminated_class(
+            discriminated_cls = allof_cls.get_discriminated_class_oapg(
                 disc_property_name=disc_property_name, disc_payload_value=disc_payload_value)
             if discriminated_cls is not None:
                 return discriminated_cls
         for oneof_cls in getattr(cls.MetaOapg, 'one_of', []):
-            discriminated_cls = oneof_cls._get_discriminated_class(
+            discriminated_cls = oneof_cls.get_discriminated_class_oapg(
                 disc_property_name=disc_property_name, disc_payload_value=disc_payload_value)
             if discriminated_cls is not None:
                 return discriminated_cls
         for anyof_cls in getattr(cls.MetaOapg, 'any_of', []):
-            discriminated_cls = anyof_cls._get_discriminated_class(
+            discriminated_cls = anyof_cls.get_discriminated_class_oapg(
                 disc_property_name=disc_property_name, disc_payload_value=disc_payload_value)
             if discriminated_cls is not None:
                 return discriminated_cls
@@ -982,11 +1330,9 @@ class Discriminable:
 
 
 class DictBase(Discriminable, ValidatorBase):
-    # subclass properties
-    _required_property_names = set()
 
     @classmethod
-    def _validate_arg_presence(cls, arg):
+    def __validate_arg_presence(cls, arg):
         """
         Ensures that:
         - all required arguments are passed in
@@ -995,7 +1341,8 @@ class DictBase(Discriminable, ValidatorBase):
             - accepted because additionalProperties exists
         Exceptions will be raised if:
         - invalid arguments were passed in
-            - a var_name is invalid if additionProperties == None and var_name not in _properties
+            - a var_name is invalid if additional_properties == NotAnyTypeSchema
+            and var_name not in properties.__annotations__
         - required properties were not passed in
 
         Args:
@@ -1006,16 +1353,20 @@ class DictBase(Discriminable, ValidatorBase):
         """
         seen_required_properties = set()
         invalid_arguments = []
+        required_property_names = getattr(cls.MetaOapg, 'required', set())
+        additional_properties = getattr(cls.MetaOapg, 'additional_properties', UnsetAnyTypeSchema)
+        properties = getattr(cls.MetaOapg, 'properties', {})
+        property_annotations = getattr(properties, '__annotations__', {})
         for property_name in arg:
-            if property_name in cls._required_property_names:
+            if property_name in required_property_names:
                 seen_required_properties.add(property_name)
-            elif property_name in cls._property_names:
+            elif property_name in property_annotations:
                 continue
-            elif cls._additional_properties:
+            elif additional_properties is not NotAnyTypeSchema:
                 continue
             else:
                 invalid_arguments.append(property_name)
-        missing_required_arguments = list(cls._required_property_names - seen_required_properties)
+        missing_required_arguments = list(required_property_names - seen_required_properties)
         if missing_required_arguments:
             missing_required_arguments.sort()
             raise ApiTypeError(
@@ -1038,7 +1389,7 @@ class DictBase(Discriminable, ValidatorBase):
             )
 
     @classmethod
-    def _validate_args(cls, arg, validation_metadata: ValidationMetadata):
+    def __validate_args(cls, arg, validation_metadata: ValidationMetadata):
         """
         Ensures that:
         - values passed in for properties are valid
@@ -1052,24 +1403,39 @@ class DictBase(Discriminable, ValidatorBase):
             ApiTypeError - for missing required arguments, or for invalid properties
         """
         path_to_schemas = {}
+        additional_properties = getattr(cls.MetaOapg, 'additional_properties', UnsetAnyTypeSchema)
+        properties = getattr(cls.MetaOapg, 'properties', {})
+        property_annotations = getattr(properties, '__annotations__', {})
         for property_name, value in arg.items():
-            if property_name in cls._property_names:
-                schema = getattr(cls, property_name)
-            elif cls._additional_properties:
-                schema = cls._additional_properties
+            path_to_item = validation_metadata.path_to_item+(property_name,)
+            if property_name in property_annotations:
+                schema = property_annotations[property_name]
+            elif additional_properties is not NotAnyTypeSchema:
+                if additional_properties is UnsetAnyTypeSchema:
+                    """
+                    If additionalProperties is unset and this path_to_item does not yet have
+                    any validations on it, validate it.
+                    If it already has validations on it, skip this validation.
+                    """
+                    if path_to_item in path_to_schemas:
+                        continue
+                schema = additional_properties
             else:
                 raise ApiTypeError('Unable to find schema for value={} in class={} at path_to_item={}'.format(
                     value, cls, validation_metadata.path_to_item+(property_name,)
                 ))
+            if isinstance(schema, classmethod):
+                # referenced schema, call classmethod property
+                schema = schema.__func__.fget(properties)
             arg_validation_metadata = ValidationMetadata(
                 from_server=validation_metadata.from_server,
                 configuration=validation_metadata.configuration,
-                path_to_item=validation_metadata.path_to_item+(property_name,),
+                path_to_item=path_to_item,
                 validated_path_to_schemas=validation_metadata.validated_path_to_schemas
             )
             if arg_validation_metadata.validation_ran_earlier(schema):
                 continue
-            other_path_to_schemas = schema._validate(value, validation_metadata=arg_validation_metadata)
+            other_path_to_schemas = schema._validate_oapg(value, validation_metadata=arg_validation_metadata)
             update(path_to_schemas, other_path_to_schemas)
         return path_to_schemas
 
@@ -1081,20 +1447,20 @@ class DictBase(Discriminable, ValidatorBase):
     ):
         if not hasattr(cls, 'MetaOapg'):
             return
-        if (cls.is_json_validation_enabled_oapg('maxProperties', validation_metadata.configuration) and
+        if (cls._is_json_validation_enabled_oapg('maxProperties', validation_metadata.configuration) and
                 hasattr(cls.MetaOapg, 'max_properties') and
                 len(arg) > cls.MetaOapg.max_properties):
-            cls.raise_validation_error_message_oapg(
+            cls._raise_validation_errror_message_oapg(
                 value=arg,
                 constraint_msg="number of properties must be less than or equal to",
                 constraint_value=cls.MetaOapg.max_properties,
                 path_to_item=validation_metadata.path_to_item
             )
 
-        if (cls.is_json_validation_enabled_oapg('minProperties', validation_metadata.configuration) and
+        if (cls._is_json_validation_enabled_oapg('minProperties', validation_metadata.configuration) and
                 hasattr(cls.MetaOapg, 'min_properties') and
                 len(arg) < cls.MetaOapg.min_properties):
-            cls.raise_validation_error_message_oapg(
+            cls._raise_validation_errror_message_oapg(
                 value=arg,
                 constraint_msg="number of properties must be greater than or equal to",
                 constraint_value=cls.MetaOapg.min_properties,
@@ -1102,13 +1468,13 @@ class DictBase(Discriminable, ValidatorBase):
             )
 
     @classmethod
-    def _validate(
+    def _validate_oapg(
         cls,
         arg,
         validation_metadata: ValidationMetadata,
     ):
         """
-        DictBase _validate
+        DictBase _validate_oapg
         We return dynamic classes of different bases depending upon the inputs
         This makes it so:
         - the returned instance is always a subclass of our defining schema
@@ -1122,29 +1488,29 @@ class DictBase(Discriminable, ValidatorBase):
             ApiValueError: when a string can't be converted into a date or datetime and it must be one of those classes
             ApiTypeError: when the input type is not in the list of allowed spec types
         """
-        if isinstance(arg, frozendict):
+        if isinstance(arg, frozendict.frozendict):
             cls.__check_dict_validations(arg, validation_metadata)
-        _path_to_schemas = super()._validate(arg, validation_metadata=validation_metadata)
-        if not isinstance(arg, frozendict):
+        _path_to_schemas = super()._validate_oapg(arg, validation_metadata=validation_metadata)
+        if not isinstance(arg, frozendict.frozendict):
             return _path_to_schemas
-        cls._validate_arg_presence(arg)
-        other_path_to_schemas = cls._validate_args(arg, validation_metadata=validation_metadata)
+        cls.__validate_arg_presence(arg)
+        other_path_to_schemas = cls.__validate_args(arg, validation_metadata=validation_metadata)
         update(_path_to_schemas, other_path_to_schemas)
         try:
-            _discriminator = cls._discriminator
+            discriminator = cls.MetaOapg.discriminator
         except AttributeError:
             return _path_to_schemas
         # discriminator exists
-        disc_prop_name = list(_discriminator.keys())[0]
-        cls._ensure_discriminator_value_present(disc_prop_name, validation_metadata, arg)
-        discriminated_cls = cls._get_discriminated_class(
+        disc_prop_name = list(discriminator.keys())[0]
+        cls._ensure_discriminator_value_present_oapg(disc_prop_name, validation_metadata, arg)
+        discriminated_cls = cls.get_discriminated_class_oapg(
             disc_property_name=disc_prop_name, disc_payload_value=arg[disc_prop_name])
         if discriminated_cls is None:
             raise ApiValueError(
                 "Invalid discriminator value was passed in to {}.{} Only the values {} are allowed at {}".format(
                     cls.__name__,
                     disc_prop_name,
-                    list(_discriminator[disc_prop_name].keys()),
+                    list(discriminator[disc_prop_name].keys()),
                     validation_metadata.path_to_item + (disc_prop_name,)
                 )
             )
@@ -1157,351 +1523,80 @@ class DictBase(Discriminable, ValidatorBase):
         )
         if updated_vm.validation_ran_earlier(discriminated_cls):
             return _path_to_schemas
-        other_path_to_schemas = discriminated_cls._validate(arg, validation_metadata=updated_vm)
+        other_path_to_schemas = discriminated_cls._validate_oapg(arg, validation_metadata=updated_vm)
         update(_path_to_schemas, other_path_to_schemas)
         return _path_to_schemas
 
     @classmethod
-    @property
-    def _additional_properties(cls):
-        return AnyTypeSchema
-
-    @classmethod
-    @property
-    @functools.cache
-    def _property_names(cls):
-        property_names = set()
-        for var_name, var_value in cls.__dict__.items():
-            # referenced models are classmethods
-            is_classmethod = type(var_value) is classmethod
-            if is_classmethod:
-                property_names.add(var_name)
-                continue
-            is_class = type(var_value) is type
-            if not is_class:
-                continue
-            if not issubclass(var_value, Schema):
-                continue
-            if var_name == '_additional_properties':
-                continue
-            property_names.add(var_name)
-        property_names = list(property_names)
-        property_names.sort()
-        return tuple(property_names)
-
-    @classmethod
-    def _get_properties(
+    def _get_properties_oapg(
         cls,
         arg: typing.Dict[str, typing.Any],
         path_to_item: typing.Tuple[typing.Union[str, int], ...],
         path_to_schemas: typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Type['Schema']]
     ):
         """
-        DictBase _get_properties, this is how properties are set
+        DictBase _get_properties_oapg, this is how properties are set
         These values already passed validation
         """
         dict_items = {}
-        # if we have definitions for property schemas convert values using it
-        # otherwise accept anything
 
         for property_name_js, value in arg.items():
-            property_cls = getattr(cls, property_name_js, cls._additional_properties)
             property_path_to_item = path_to_item + (property_name_js,)
-            stored_property_cls = path_to_schemas.get(property_path_to_item)
-            if stored_property_cls:
-                property_cls = stored_property_cls
-
-            if isinstance(value, property_cls):
-                dict_items[property_name_js] = value
-                continue
-
-            new_value = property_cls._get_new_instance_without_conversion(
+            property_cls = path_to_schemas[property_path_to_item]
+            new_value = property_cls._get_new_instance_without_conversion_oapg(
                 value,
                 property_path_to_item,
                 path_to_schemas
             )
             dict_items[property_name_js] = new_value
+
         return dict_items
 
-    def __setattr__(self, name, value):
+    def __setattr__(self, name: str, value: typing.Any):
         if not isinstance(self, FileIO):
             raise AttributeError('property setting not supported on immutable instances')
 
-    def __getattr__(self, name):
-        if isinstance(self, frozendict):
-            # if an attribute does not exist
-            try:
-                return self[name]
-            except KeyError as ex:
-                raise AttributeError(str(ex))
-        return super().__getattr__(self, name)
-
-    def __getattribute__(self, name):
-        # if an attribute does exist (for example as a class property but not as an instance method)
+    def __getattr__(self, name: str):
+        """
+        for instance.name access
+        Properties are only type hinted for required properties
+        so that hasattr(instance, 'optionalProp') is False when that key is not present
+        """
+        if not isinstance(self, frozendict.frozendict):
+            return super().__getattr__(name)
+        if name not in self.__class__.__annotations__:
+            raise AttributeError(f"{self} has no attribute '{name}'")
         try:
-            return self[name]
-        except (KeyError, TypeError):
-            return super().__getattribute__(name)
+            value = self[name]
+            return value
+        except KeyError as ex:
+            raise AttributeError(str(ex))
 
-
-inheritable_primitive_types_set = {decimal.Decimal, str, tuple, frozendict, FileIO, bytes, BoolClass, NoneClass}
-
-
-class Schema:
-    """
-    the base class of all swagger/openapi schemas/models
-
-    ensures that:
-    - payload passes required validations
-    - payload is of allowed types
-    - payload value is an allowed enum value
-    """
-
-    @classmethod
-    def _validate(
-        cls,
-        arg,
-        validation_metadata: ValidationMetadata,
-    ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict, tuple]]]:
+    def __getitem__(self, name: str):
         """
-        Schema _validate
-        Runs all schema validation logic and
-        returns a dynamic class of different bases depending upon the input
-        This makes it so:
-        - the returned instance is always a subclass of our defining schema
-            - this allows us to check type based on whether an instance is a subclass of a schema
-        - the returned instance is a serializable type (except for None, True, and False) which are enums
-
-        Use cases:
-        1. inheritable type: string/decimal.Decimal/frozendict/tuple
-        2. singletons: bool/None -> uses the base classes BoolClass/NoneClass
-
-        Required Steps:
-        1. verify type of input is valid vs the allowed _types
-        2. check validations that are applicable for this type of input
-        3. if enums exist, check that the value exists in the enum
-
-        Returns:
-            path_to_schemas: a map of path to schemas
-
-        Raises:
-            ApiValueError: when a string can't be converted into a date or datetime and it must be one of those classes
-            ApiTypeError: when the input type is not in the list of allowed spec types
+        dict_instance[name] accessor
+        key errors thrown
         """
-        base_class = type(arg)
-        path_to_schemas = {validation_metadata.path_to_item: set()}
-        path_to_schemas[validation_metadata.path_to_item].add(cls)
-        path_to_schemas[validation_metadata.path_to_item].add(base_class)
-        return path_to_schemas
+        if not isinstance(self, frozendict.frozendict):
+            return super().__getattr__(name)
+        return super().__getitem__(name)
 
-    @staticmethod
-    def __process_schema_classes(
-        schema_classes: typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict, tuple]]
-    ):
-        """
-        Processes and mutates schema_classes
-        If a SomeSchema is a subclass of DictSchema then remove DictSchema because it is already included
-        """
-        if len(schema_classes) < 2:
-            return
-        x_schema = schema_type_classes & schema_classes
-        if not x_schema:
-            return
-        x_schema = x_schema.pop()
-        if any(c is not x_schema and issubclass(c, x_schema) for c in schema_classes):
-            # needed to not have a mro error in get_new_class
-            schema_classes.remove(x_schema)
-
-    @classmethod
-    def __get_new_cls(
-        cls,
-        arg,
-        validation_metadata: ValidationMetadata
-    ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], 'Schema']:
-        """
-        Make a new dynamic class and return an instance of that class
-        We are making an instance of cls, but instead of making cls
-        make a new class, new_cls
-        which includes dynamic bases including cls
-        return an instance of that new class
-
-        Dict property + List Item Assignment Use cases:
-        1. value is NOT an instance of the required schema class
-            the value is validated by _validate
-            _validate returns a key value pair
-            where the key is the path to the item, and the value will be the required manufactured class
-            made out of the matching schemas
-        2. value is an instance of the the correct schema type
-            the value is NOT validated by _validate, _validate only checks that the instance is of the correct schema type
-            for this value, _validate does NOT return an entry for it in _path_to_schemas
-            and in list/dict _get_items,_get_properties the value will be directly assigned
-            because value is of the correct type, and validation was run earlier when the instance was created
-        """
-        _path_to_schemas = {}
-        if validation_metadata.validated_path_to_schemas:
-            update(_path_to_schemas, validation_metadata.validated_path_to_schemas)
-        if not validation_metadata.validation_ran_earlier(cls):
-            other_path_to_schemas = cls._validate(arg, validation_metadata=validation_metadata)
-            update(_path_to_schemas, other_path_to_schemas)
-        # loop through it make a new class for each entry
-        # do not modify the returned result because it is cached and we would be modifying the cached value
-        path_to_schemas = {}
-        for path, schema_classes in _path_to_schemas.items():
-            """
-            Use cases
-            1. N number of schema classes + enum + type != bool/None, classes in path_to_schemas: tuple/frozendict/str/Decimal/bytes/FileIo
-                needs Singleton added
-            2. N number of schema classes + enum + type == bool/None, classes in path_to_schemas: BoolClass/NoneClass
-                Singleton already added
-            3. N number of schema classes, classes in path_to_schemas: BoolClass/NoneClass/tuple/frozendict/str/Decimal/bytes/FileIo
-            """
-            cls.__process_schema_classes(schema_classes)
-            enum_schema = any(
-                hasattr(this_cls, '_enum_value_to_name') for this_cls in schema_classes)
-            inheritable_primitive_type = schema_classes.intersection(inheritable_primitive_types_set)
-            chosen_schema_classes = schema_classes - inheritable_primitive_type
-            suffix = tuple(inheritable_primitive_type)
-            if enum_schema and suffix[0] not in {NoneClass, BoolClass}:
-                suffix = (Singleton,) + suffix
-
-            used_classes = tuple(sorted(chosen_schema_classes, key=lambda a_cls: a_cls.__name__)) + suffix
-            mfg_cls = get_new_class(class_name='DynamicSchema', bases=used_classes)
-            path_to_schemas[path] = mfg_cls
-
-        return path_to_schemas
-
-    @classmethod
-    def _get_new_instance_without_conversion(
-        cls: 'Schema',
-        arg: typing.Any,
-        path_to_item: typing.Tuple[typing.Union[str, int], ...],
-        path_to_schemas: typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Type['Schema']]
-    ):
-        # We have a Dynamic class and we are making an instance of it
-        if issubclass(cls, frozendict):
-            properties = cls._get_properties(arg, path_to_item, path_to_schemas)
-            return super(Schema, cls).__new__(cls, properties)
-        elif issubclass(cls, tuple):
-            items = cls._get_items(arg, path_to_item, path_to_schemas)
-            return super(Schema, cls).__new__(cls, items)
-        """
-        str = openapi str, date, and datetime
-        decimal.Decimal = openapi int and float
-        FileIO = openapi binary type and the user inputs a file
-        bytes = openapi binary type and the user inputs bytes
-        """
-        return super(Schema, cls).__new__(cls, arg)
-
-    @classmethod
-    def _from_openapi_data(
-        cls,
-        arg: typing.Union[
-            str,
-            date,
-            datetime,
-            int,
-            float,
-            decimal.Decimal,
-            bool,
-            None,
-            'Schema',
-            dict,
-            frozendict,
-            tuple,
-            list,
-            io.FileIO,
-            io.BufferedReader,
-            bytes
-        ],
-        _configuration: typing.Optional[Configuration]
-    ):
-        """
-        Schema _from_openapi_data
-        """
-        from_server = True
-        validated_path_to_schemas = {}
-        arg = cast_to_allowed_types(arg, from_server, validated_path_to_schemas)
-        validation_metadata = ValidationMetadata(
-            from_server=from_server, configuration=_configuration, validated_path_to_schemas=validated_path_to_schemas)
-        path_to_schemas = cls.__get_new_cls(arg, validation_metadata)
-        new_cls = path_to_schemas[validation_metadata.path_to_item]
-        new_inst = new_cls._get_new_instance_without_conversion(
-            arg,
-            validation_metadata.path_to_item,
-            path_to_schemas
-        )
-        return new_inst
-
-    @staticmethod
-    def __get_input_dict(*args, **kwargs) -> frozendict:
-        input_dict = {}
-        if args and isinstance(args[0], (dict, frozendict)):
-            input_dict.update(args[0])
-        if kwargs:
-            input_dict.update(kwargs)
-        return frozendict(input_dict)
-
-    @staticmethod
-    def __remove_unsets(kwargs):
-        return {key: val for key, val in kwargs.items() if val is not unset}
-
-    def __new__(cls, *args: typing.Union[dict, frozendict, list, tuple, decimal.Decimal, float, int, str, date, datetime, bool, None, 'Schema'], _configuration: typing.Optional[Configuration] = None, **kwargs: typing.Union[dict, frozendict, list, tuple, decimal.Decimal, float, int, str, date, datetime, bool, None, 'Schema', Unset]):
-        """
-        Schema __new__
-
-        Args:
-            args (int/float/decimal.Decimal/str/list/tuple/dict/frozendict/bool/None): the value
-            kwargs (str, int/float/decimal.Decimal/str/list/tuple/dict/frozendict/bool/None): dict values
-            _configuration: contains the Configuration that enables json schema validation keywords
-                like minItems, minLength etc
-        """
-        kwargs = cls.__remove_unsets(kwargs)
-        if not args and not kwargs:
-            raise TypeError(
-                'No input given. args or kwargs must be given.'
-            )
-        if not kwargs and args and not isinstance(args[0], dict):
-            arg = args[0]
-        else:
-            arg = cls.__get_input_dict(*args, **kwargs)
-        from_server = False
-        validated_path_to_schemas = {}
-        arg = cast_to_allowed_types(
-            arg, from_server, validated_path_to_schemas)
-        validation_metadata = ValidationMetadata(
-            configuration=_configuration, from_server=from_server, validated_path_to_schemas=validated_path_to_schemas)
-        path_to_schemas = cls.__get_new_cls(arg, validation_metadata)
-        new_cls = path_to_schemas[validation_metadata.path_to_item]
-        return new_cls._get_new_instance_without_conversion(
-            arg,
-            validation_metadata.path_to_item,
-            path_to_schemas
-        )
-
-    def __init__(
-        self,
-        *args: typing.Union[
-            dict, frozendict, list, tuple, decimal.Decimal, float, int, str, date, datetime, bool, None, 'Schema'],
-        _configuration: typing.Optional[Configuration] = None,
-        **kwargs: typing.Union[
-            dict, frozendict, list, tuple, decimal.Decimal, float, int, str, date, datetime, bool, None, 'Schema', Unset
-        ]
-    ):
-        """
-        this is needed to fix 'Unexpected argument' warning in pycharm
-        this code does nothing because all Schema instances are immutable
-        this means that all input data is passed into and used in new, and after the new instance is made
-        no new attributes are assigned and init is not used
-        """
-        pass
+    def get_item_oapg(self, name: str) -> typing.Union['AnyTypeSchema', Unset]:
+        # dict_instance[name] accessor
+        if not isinstance(self, frozendict.frozendict):
+            raise NotImplementedError()
+        try:
+            return super().__getitem__(name)
+        except KeyError:
+            return unset
 
 
 def cast_to_allowed_types(
-    arg: typing.Union[str, date, datetime, uuid.UUID, decimal.Decimal, int, float, None, dict, frozendict, list, tuple, bytes, Schema],
+    arg: typing.Union[str, date, datetime, uuid.UUID, decimal.Decimal, int, float, None, dict, frozendict.frozendict, list, tuple, bytes, Schema, io.FileIO, io.BufferedReader],
     from_server: bool,
-    validated_path_to_schemas: typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict, tuple]]],
+    validated_path_to_schemas: typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict.frozendict, tuple]]],
     path_to_item: typing.Tuple[typing.Union[str, int], ...] = tuple(['args[0]']),
-) -> typing.Union[frozendict, tuple, decimal.Decimal, str, bytes, BoolClass, NoneClass, FileIO]:
+) -> typing.Union[frozendict.frozendict, tuple, decimal.Decimal, str, bytes, BoolClass, NoneClass, FileIO]:
     """
     Casts the input payload arg into the allowed types
     The input validated_path_to_schemas is mutated by running this function
@@ -1525,16 +1620,25 @@ def cast_to_allowed_types(
     if isinstance(arg, Schema):
         # store the already run validations
         schema_classes = set()
-        for cls in arg.__class__.__bases__:
-            if cls is Singleton:
-                continue
-            schema_classes.add(cls)
+        source_schema_was_unset = len(arg.__class__.__bases__) == 2 and UnsetAnyTypeSchema in arg.__class__.__bases__
+        if not source_schema_was_unset:
+            """
+            Do not include UnsetAnyTypeSchema and its base class because
+            it did not exist in the original spec schema definition
+            It was added to ensure that all instances are of type Schema and the allowed base types
+            """
+            for cls in arg.__class__.__bases__:
+                if cls is Singleton:
+                    # Skip Singleton
+                    continue
+                schema_classes.add(cls)
         validated_path_to_schemas[path_to_item] = schema_classes
 
+    type_error = ApiTypeError(f"Invalid type. Required value type is str and passed type was {type(arg)} at {path_to_item}")
     if isinstance(arg, str):
         return str(arg)
-    elif isinstance(arg, (dict, frozendict)):
-        return frozendict({key: cast_to_allowed_types(val, from_server, validated_path_to_schemas, path_to_item + (key,)) for key, val in arg.items()})
+    elif isinstance(arg, (dict, frozendict.frozendict)):
+        return frozendict.frozendict({key: cast_to_allowed_types(val, from_server, validated_path_to_schemas, path_to_item + (key,)) for key, val in arg.items()})
     elif isinstance(arg, (bool, BoolClass)):
         """
         this check must come before isinstance(arg, (int, float))
@@ -1559,13 +1663,11 @@ def cast_to_allowed_types(
     elif isinstance(arg, (date, datetime)):
         if not from_server:
             return arg.isoformat()
-        # ApiTypeError will be thrown later by _validate_type
-        return arg
+        raise type_error
     elif isinstance(arg, uuid.UUID):
         if not from_server:
             return str(arg)
-        # ApiTypeError will be thrown later by _validate_type
-        return arg
+        raise type_error
     elif isinstance(arg, decimal.Decimal):
         return decimal.Decimal(arg)
     elif isinstance(arg, bytes):
@@ -1583,7 +1685,7 @@ class ComposedBase(Discriminable):
         for allof_cls in cls.MetaOapg.all_of:
             if validation_metadata.validation_ran_earlier(allof_cls):
                 continue
-            other_path_to_schemas = allof_cls._validate(arg, validation_metadata=validation_metadata)
+            other_path_to_schemas = allof_cls._validate_oapg(arg, validation_metadata=validation_metadata)
             update(path_to_schemas, other_path_to_schemas)
         return path_to_schemas
 
@@ -1604,7 +1706,7 @@ class ComposedBase(Discriminable):
                 oneof_classes.append(oneof_cls)
                 continue
             try:
-                path_to_schemas = oneof_cls._validate(arg, validation_metadata=validation_metadata)
+                path_to_schemas = oneof_cls._validate_oapg(arg, validation_metadata=validation_metadata)
             except (ApiValueError, ApiTypeError) as ex:
                 if discriminated_cls is not None and oneof_cls is discriminated_cls:
                     raise ex
@@ -1637,7 +1739,7 @@ class ComposedBase(Discriminable):
                 continue
 
             try:
-                other_path_to_schemas = anyof_cls._validate(arg, validation_metadata=validation_metadata)
+                other_path_to_schemas = anyof_cls._validate_oapg(arg, validation_metadata=validation_metadata)
             except (ApiValueError, ApiTypeError) as ex:
                 if discriminated_cls is not None and anyof_cls is discriminated_cls:
                     raise ex
@@ -1652,13 +1754,13 @@ class ComposedBase(Discriminable):
         return path_to_schemas
 
     @classmethod
-    def _validate(
+    def _validate_oapg(
         cls,
         arg,
         validation_metadata: ValidationMetadata,
-    ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict, tuple]]]:
+    ) -> typing.Dict[typing.Tuple[typing.Union[str, int], ...], typing.Set[typing.Union['Schema', str, decimal.Decimal, BoolClass, NoneClass, frozendict.frozendict, tuple]]]:
         """
-        ComposedBase _validate
+        ComposedBase _validate_oapg
         We return dynamic classes of different bases depending upon the inputs
         This makes it so:
         - the returned instance is always a subclass of our defining schema
@@ -1673,7 +1775,7 @@ class ComposedBase(Discriminable):
             ApiTypeError: when the input type is not in the list of allowed spec types
         """
         # validation checking on types, validations, and enums
-        path_to_schemas = super()._validate(arg, validation_metadata=validation_metadata)
+        path_to_schemas = super()._validate_oapg(arg, validation_metadata=validation_metadata)
 
         updated_vm = ValidationMetadata(
             configuration=validation_metadata.configuration,
@@ -1684,13 +1786,13 @@ class ComposedBase(Discriminable):
         )
 
         # process composed schema
-        _discriminator = getattr(cls, '_discriminator', None)
+        discriminator = getattr(cls, 'discriminator', None)
         discriminated_cls = None
-        if _discriminator and arg and isinstance(arg, frozendict):
-            disc_property_name = list(_discriminator.keys())[0]
-            cls._ensure_discriminator_value_present(disc_property_name, updated_vm, arg)
+        if discriminator and arg and isinstance(arg, frozendict.frozendict):
+            disc_property_name = list(discriminator.keys())[0]
+            cls._ensure_discriminator_value_present_oapg(disc_property_name, updated_vm, arg)
             # get discriminated_cls by looking at the dict in the current class
-            discriminated_cls = cls._get_discriminated_class(
+            discriminated_cls = cls.get_discriminated_class_oapg(
                 disc_property_name=disc_property_name, disc_payload_value=arg[disc_property_name])
             if discriminated_cls is None:
                 raise ApiValueError(
@@ -1698,7 +1800,7 @@ class ComposedBase(Discriminable):
                         arg[disc_property_name],
                         cls.__name__,
                         disc_property_name,
-                        list(_discriminator[disc_property_name].keys()),
+                        list(discriminator[disc_property_name].keys()),
                         updated_vm.path_to_item + (disc_property_name,)
                     )
                 )
@@ -1736,7 +1838,7 @@ class ComposedBase(Discriminable):
                 raise not_exception
 
             try:
-                other_path_to_schemas = not_cls._validate(arg, validation_metadata=updated_vm)
+                other_path_to_schemas = not_cls._validate_oapg(arg, validation_metadata=updated_vm)
             except (ApiValueError, ApiTypeError):
                 pass
             if other_path_to_schemas:
@@ -1750,7 +1852,7 @@ class ComposedBase(Discriminable):
 
 # DictBase, ListBase, NumberBase, StrBase, BoolBase, NoneBase
 class ComposedSchema(
-    SchemaTypeCheckerClsFactory(typing.Union[NoneClass, str, decimal.Decimal, BoolClass, tuple, frozendict]),
+    SchemaTypeCheckerClsFactory(typing.Union[NoneClass, str, decimal.Decimal, BoolClass, tuple, frozendict.frozendict]),
     ComposedBase,
     DictBase,
     ListBase,
@@ -1758,53 +1860,53 @@ class ComposedSchema(
     StrBase,
     BoolBase,
     NoneBase,
-    Schema
+    Schema,
+    NoneFrozenDictTupleStrDecimalBoolMixin
 ):
-
-    # subclass properties
-    _composed_schemas = {}
-
     @classmethod
-    def _from_openapi_data(cls, *args: typing.Any, _configuration: typing.Optional[Configuration] = None, **kwargs):
+    def from_openapi_data_oapg(cls, *args: typing.Any, _configuration: typing.Optional[Configuration] = None, **kwargs):
         if not args:
             if not kwargs:
                 raise ApiTypeError('{} is missing required input data in args or kwargs'.format(cls.__name__))
             args = (kwargs, )
-        return super()._from_openapi_data(args[0], _configuration=_configuration)
+        return super().from_openapi_data_oapg(args[0], _configuration=_configuration)
 
 
 class ListSchema(
     SchemaTypeCheckerClsFactory(typing.Union[tuple]),
     ListBase,
-    Schema
+    Schema,
+    TupleMixin
 ):
 
     @classmethod
-    def _from_openapi_data(cls, arg: typing.List[typing.Any], _configuration: typing.Optional[Configuration] = None):
-        return super()._from_openapi_data(arg, _configuration=_configuration)
+    def from_openapi_data_oapg(cls, arg: typing.List[typing.Any], _configuration: typing.Optional[Configuration] = None):
+        return super().from_openapi_data_oapg(arg, _configuration=_configuration)
 
-    def __new__(cls, arg: typing.Union[list, tuple], **kwargs: ValidationMetadata):
+    def __new__(cls, arg: typing.Union[typing.List[typing.Any], typing.Tuple[typing.Any]], **kwargs: Configuration):
         return super().__new__(cls, arg, **kwargs)
 
 
 class NoneSchema(
     SchemaTypeCheckerClsFactory(typing.Union[NoneClass]),
     NoneBase,
-    Schema
+    Schema,
+    NoneMixin
 ):
 
     @classmethod
-    def _from_openapi_data(cls, arg: None, _configuration: typing.Optional[Configuration] = None):
-        return super()._from_openapi_data(arg, _configuration=_configuration)
+    def from_openapi_data_oapg(cls, arg: None, _configuration: typing.Optional[Configuration] = None):
+        return super().from_openapi_data_oapg(arg, _configuration=_configuration)
 
-    def __new__(cls, arg: None, **kwargs: typing.Union[ValidationMetadata]):
+    def __new__(cls, arg: None, **kwargs: Configuration):
         return super().__new__(cls, arg, **kwargs)
 
 
 class NumberSchema(
     SchemaTypeCheckerClsFactory(typing.Union[decimal.Decimal]),
     NumberBase,
-    Schema
+    Schema,
+    DecimalMixin
 ):
     """
     This is used for type: number with no format
@@ -1812,16 +1914,16 @@ class NumberSchema(
     """
 
     @classmethod
-    def _from_openapi_data(cls, arg: typing.Union[int, float, decimal.Decimal], _configuration: typing.Optional[Configuration] = None):
-        return super()._from_openapi_data(arg, _configuration=_configuration)
+    def from_openapi_data_oapg(cls, arg: typing.Union[int, float, decimal.Decimal], _configuration: typing.Optional[Configuration] = None):
+        return super().from_openapi_data_oapg(arg, _configuration=_configuration)
 
-    def __new__(cls, arg: typing.Union[decimal.Decimal, int, float], **kwargs: typing.Union[ValidationMetadata]):
+    def __new__(cls, arg: typing.Union[decimal.Decimal, int, float], **kwargs: Configuration):
         return super().__new__(cls, arg, **kwargs)
 
 
 class IntBase(NumberBase):
     @property
-    def as_int(self) -> int:
+    def as_int_oapg(self) -> int:
         try:
             return self._as_int
         except AttributeError:
@@ -1829,7 +1931,7 @@ class IntBase(NumberBase):
             return self._as_int
 
     @classmethod
-    def _validate_format(cls, arg: typing.Optional[decimal.Decimal], validation_metadata: ValidationMetadata):
+    def __validate_format(cls, arg: typing.Optional[decimal.Decimal], validation_metadata: ValidationMetadata):
         if isinstance(arg, decimal.Decimal):
 
             denominator = arg.as_integer_ratio()[-1]
@@ -1839,26 +1941,26 @@ class IntBase(NumberBase):
                 )
 
     @classmethod
-    def _validate(
+    def _validate_oapg(
         cls,
         arg,
         validation_metadata: ValidationMetadata,
     ):
         """
-        IntBase _validate
+        IntBase _validate_oapg
         TODO what about types = (int, number) -> IntBase, NumberBase? We could drop int and keep number only
         """
-        cls._validate_format(arg, validation_metadata=validation_metadata)
-        return super()._validate(arg, validation_metadata=validation_metadata)
+        cls.__validate_format(arg, validation_metadata=validation_metadata)
+        return super()._validate_oapg(arg, validation_metadata=validation_metadata)
 
 
 class IntSchema(IntBase, NumberSchema):
 
     @classmethod
-    def _from_openapi_data(cls, arg: int, _configuration: typing.Optional[Configuration] = None):
-        return super()._from_openapi_data(arg, _configuration=_configuration)
+    def from_openapi_data_oapg(cls, arg: int, _configuration: typing.Optional[Configuration] = None):
+        return super().from_openapi_data_oapg(arg, _configuration=_configuration)
 
-    def __new__(cls, arg: typing.Union[decimal.Decimal, int], **kwargs: typing.Union[ValidationMetadata]):
+    def __new__(cls, arg: typing.Union[decimal.Decimal, int], **kwargs: Configuration):
         return super().__new__(cls, arg, **kwargs)
 
 
@@ -1903,9 +2005,9 @@ class Float32Schema(
 ):
 
     @classmethod
-    def _from_openapi_data(cls, arg: typing.Union[float, decimal.Decimal], _configuration: typing.Optional[Configuration] = None):
+    def from_openapi_data_oapg(cls, arg: typing.Union[float, decimal.Decimal], _configuration: typing.Optional[Configuration] = None):
         # todo check format
-        return super()._from_openapi_data(arg, _configuration=_configuration)
+        return super().from_openapi_data_oapg(arg, _configuration=_configuration)
 
 
 class Float64Base:
@@ -1921,15 +2023,16 @@ class Float64Schema(
 ):
 
     @classmethod
-    def _from_openapi_data(cls, arg: typing.Union[float, decimal.Decimal], _configuration: typing.Optional[Configuration] = None):
+    def from_openapi_data_oapg(cls, arg: typing.Union[float, decimal.Decimal], _configuration: typing.Optional[Configuration] = None):
         # todo check format
-        return super()._from_openapi_data(arg, _configuration=_configuration)
+        return super().from_openapi_data_oapg(arg, _configuration=_configuration)
 
 
 class StrSchema(
     SchemaTypeCheckerClsFactory(typing.Union[str]),
     StrBase,
-    Schema
+    Schema,
+    StrMixin
 ):
     """
     date + datetime string types must inherit from this class
@@ -1939,34 +2042,34 @@ class StrSchema(
     """
 
     @classmethod
-    def _from_openapi_data(cls, arg: typing.Union[str], _configuration: typing.Optional[Configuration] = None) -> 'StrSchema':
-        return super()._from_openapi_data(arg, _configuration=_configuration)
+    def from_openapi_data_oapg(cls, arg: typing.Union[str], _configuration: typing.Optional[Configuration] = None) -> 'StrSchema':
+        return super().from_openapi_data_oapg(arg, _configuration=_configuration)
 
-    def __new__(cls, arg: typing.Union[str, date, datetime, uuid.UUID], **kwargs: typing.Union[ValidationMetadata]):
+    def __new__(cls, arg: typing.Union[str, date, datetime, uuid.UUID], **kwargs: Configuration):
         return super().__new__(cls, arg, **kwargs)
 
 
 class UUIDSchema(UUIDBase, StrSchema):
 
-    def __new__(cls, arg: typing.Union[str, uuid.UUID], **kwargs: typing.Union[ValidationMetadata]):
+    def __new__(cls, arg: typing.Union[str, uuid.UUID], **kwargs: Configuration):
         return super().__new__(cls, arg, **kwargs)
 
 
 class DateSchema(DateBase, StrSchema):
 
-    def __new__(cls, arg: typing.Union[str, datetime], **kwargs: typing.Union[ValidationMetadata]):
+    def __new__(cls, arg: typing.Union[str, date], **kwargs: Configuration):
         return super().__new__(cls, arg, **kwargs)
 
 
 class DateTimeSchema(DateTimeBase, StrSchema):
 
-    def __new__(cls, arg: typing.Union[str, datetime], **kwargs: typing.Union[ValidationMetadata]):
+    def __new__(cls, arg: typing.Union[str, datetime], **kwargs: Configuration):
         return super().__new__(cls, arg, **kwargs)
 
 
 class DecimalSchema(DecimalBase, StrSchema):
 
-    def __new__(cls, arg: typing.Union[str], **kwargs: typing.Union[ValidationMetadata]):
+    def __new__(cls, arg: typing.Union[str], **kwargs: Configuration):
         """
         Note: Decimals may not be passed in because cast_to_allowed_types is only invoked once for payloads
         which can be simple (str) or complex (dicts or lists with nested values)
@@ -1985,7 +2088,7 @@ class BytesSchema(
     """
     this class will subclass bytes and is immutable
     """
-    def __new__(cls, arg: typing.Union[bytes], **kwargs: typing.Union[ValidationMetadata]):
+    def __new__(cls, arg: typing.Union[bytes], **kwargs: Configuration):
         return super(Schema, cls).__new__(cls, arg)
 
 
@@ -2010,7 +2113,7 @@ class FileSchema(
     - to be able to preserve file name info
     """
 
-    def __new__(cls, arg: typing.Union[io.FileIO, io.BufferedReader], **kwargs: typing.Union[ValidationMetadata]):
+    def __new__(cls, arg: typing.Union[io.FileIO, io.BufferedReader], **kwargs: Configuration):
         return super(Schema, cls).__new__(cls, arg)
 
 
@@ -2023,6 +2126,7 @@ class BinarySchema(
     ComposedBase,
     BinaryBase,
     Schema,
+    BinaryMixin
 ):
     class MetaOapg:
         one_of = [
@@ -2030,27 +2134,28 @@ class BinarySchema(
             FileSchema,
         ]
 
-    def __new__(cls, arg: typing.Union[io.FileIO, io.BufferedReader, bytes], **kwargs: typing.Union[ValidationMetadata]):
+    def __new__(cls, arg: typing.Union[io.FileIO, io.BufferedReader, bytes], **kwargs: Configuration):
         return super().__new__(cls, arg)
 
 
 class BoolSchema(
     SchemaTypeCheckerClsFactory(typing.Union[BoolClass]),
     BoolBase,
-    Schema
+    Schema,
+    BoolMixin
 ):
 
     @classmethod
-    def _from_openapi_data(cls, arg: bool, _configuration: typing.Optional[Configuration] = None):
-        return super()._from_openapi_data(arg, _configuration=_configuration)
+    def from_openapi_data_oapg(cls, arg: bool, _configuration: typing.Optional[Configuration] = None):
+        return super().from_openapi_data_oapg(arg, _configuration=_configuration)
 
-    def __new__(cls, arg: bool, **kwargs: typing.Union[ValidationMetadata]):
+    def __new__(cls, arg: bool, **kwargs: ValidationMetadata):
         return super().__new__(cls, arg, **kwargs)
 
 
 class AnyTypeSchema(
     SchemaTypeCheckerClsFactory(
-        typing.Union[frozendict, tuple, decimal.Decimal, str, BoolClass, NoneClass, bytes, FileIO]
+        typing.Union[frozendict.frozendict, tuple, decimal.Decimal, str, BoolClass, NoneClass, bytes, FileIO]
     ),
     DictBase,
     ListBase,
@@ -2058,26 +2163,57 @@ class AnyTypeSchema(
     StrBase,
     BoolBase,
     NoneBase,
-    Schema
+    Schema,
+    NoneFrozenDictTupleStrDecimalBoolMixin
 ):
+    # Python representation of a schema defined as true or {}
     pass
 
 
-class DictSchema(
-    SchemaTypeCheckerClsFactory(typing.Union[frozendict]),
-    DictBase,
-    Schema
+class UnsetAnyTypeSchema(AnyTypeSchema):
+    # Used when additionalProperties/items was not explicitly defined and a defining schema is needed
+    pass
+
+
+class NotAnyTypeSchema(
+    ComposedSchema,
 ):
+    """
+    Python representation of a schema defined as false or {'not': {}}
+    Does not allow inputs in of AnyType
+    Note: validations on this class are never run because the code knows that no inputs will ever validate
+    """
 
+    class MetaOapg:
+        not_schema = AnyTypeSchema
+
+    def __new__(
+        cls,
+        *args,
+        _configuration: typing.Optional[Configuration] = None,
+    ) -> 'NotAnyTypeSchema':
+        return super().__new__(
+            cls,
+            *args,
+            _configuration=_configuration,
+        )
+
+
+class DictSchema(
+    SchemaTypeCheckerClsFactory(typing.Union[frozendict.frozendict]),
+    DictBase,
+    Schema,
+    FrozenDictMixin
+):
     @classmethod
-    def _from_openapi_data(cls, arg: typing.Dict[str, typing.Any], _configuration: typing.Optional[Configuration] = None):
-        return super()._from_openapi_data(arg, _configuration=_configuration)
+    def from_openapi_data_oapg(cls, arg: typing.Dict[str, typing.Any], _configuration: typing.Optional[Configuration] = None):
+        return super().from_openapi_data_oapg(arg, _configuration=_configuration)
 
-    def __new__(cls, *args: typing.Union[dict, frozendict], **kwargs: typing.Union[dict, frozendict, list, tuple, decimal.Decimal, float, int, str, date, datetime, bool, None, bytes, Schema, Unset, ValidationMetadata]):
+    def __new__(cls, *args: typing.Union[dict, frozendict.frozendict], **kwargs: typing.Union[dict, frozendict.frozendict, list, tuple, decimal.Decimal, float, int, str, date, datetime, bool, None, bytes, Schema, Unset, ValidationMetadata]):
         return super().__new__(cls, *args, **kwargs)
 
 
-schema_type_classes = set([NoneSchema, DictSchema, ListSchema, NumberSchema, StrSchema, BoolSchema])
+schema_type_classes = {NoneSchema, DictSchema, ListSchema, NumberSchema, StrSchema, BoolSchema, AnyTypeSchema}
 
 
 @functools.cache
@@ -2088,7 +2224,8 @@ def get_new_class(
     """
     Returns a new class that is made with the subclass bases
     """
-    return type(class_name, bases, {})
+    new_cls: typing.Type[Schema] = type(class_name, bases, {})
+    return new_cls
 
 
 LOG_CACHE_USAGE = False

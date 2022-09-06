@@ -7,17 +7,19 @@
 """
 
 from dataclasses import dataclass
-import re  # noqa: F401
-import sys  # noqa: F401
-import typing
 import urllib3
-import functools  # noqa: F401
 from urllib3._collections import HTTPHeaderDict
 
 from unit_test_api import api_client, exceptions
-import decimal  # noqa: F401
 from datetime import date, datetime  # noqa: F401
-from frozendict import frozendict  # noqa: F401
+import decimal  # noqa: F401
+import functools  # noqa: F401
+import io  # noqa: F401
+import re  # noqa: F401
+import typing  # noqa: F401
+import uuid  # noqa: F401
+
+import frozendict  # noqa: F401
 
 from unit_test_api import schemas  # noqa: F401
 
@@ -36,15 +38,42 @@ class SchemaFor200ResponseBodyApplicationJson(
         class not_schema(
             schemas.DictSchema
         ):
-            foo = schemas.StrSchema
         
+        
+            class MetaOapg:
+                class properties:
+                    foo = schemas.StrSchema
+                    __annotations__ = {
+                        "foo": foo,
+                    }
+            
+            @typing.overload
+            def __getitem__(self, name: typing.Literal["foo"]) -> MetaOapg.properties.foo: ...
+            
+            @typing.overload
+            def __getitem__(self, name: str) -> schemas.UnsetAnyTypeSchema: ...
+            
+            def __getitem__(self, name: typing.Union[typing.Literal["foo", ], str]):
+                # dict_instance[name] accessor
+                return super().__getitem__(name)
+            
+            
+            @typing.overload
+            def get_item_oapg(self, name: typing.Literal["foo"]) -> typing.Union[MetaOapg.properties.foo, schemas.Unset]: ...
+            
+            @typing.overload
+            def get_item_oapg(self, name: str) -> typing.Union[schemas.UnsetAnyTypeSchema, schemas.Unset]: ...
+            
+            def get_item_oapg(self, name: typing.Union[typing.Literal["foo", ], str]):
+                return super().get_item_oapg(name)
+            
         
             def __new__(
                 cls,
-                *args: typing.Union[dict, frozendict, ],
-                foo: typing.Union[foo, schemas.Unset] = schemas.unset,
+                *args: typing.Union[dict, frozendict.frozendict, ],
+                foo: typing.Union[MetaOapg.properties.foo, str, schemas.Unset] = schemas.unset,
                 _configuration: typing.Optional[schemas.Configuration] = None,
-                **kwargs: typing.Type[schemas.Schema],
+                **kwargs: typing.Union[schemas.AnyTypeSchema, dict, frozendict.frozendict, str, date, datetime, uuid.UUID, int, float, decimal.Decimal, None, list, tuple, bytes],
             ) -> 'not_schema':
                 return super().__new__(
                     cls,
@@ -54,11 +83,12 @@ class SchemaFor200ResponseBodyApplicationJson(
                     **kwargs,
                 )
 
+
     def __new__(
         cls,
-        *args: typing.Union[dict, frozendict, str, date, datetime, int, float, decimal.Decimal, None, list, tuple, bytes],
+        *args: typing.Union[dict, frozendict.frozendict, str, date, datetime, uuid.UUID, int, float, decimal.Decimal, None, list, tuple, bytes, ],
         _configuration: typing.Optional[schemas.Configuration] = None,
-        **kwargs: typing.Type[schemas.Schema],
+        **kwargs: typing.Union[schemas.AnyTypeSchema, dict, frozendict.frozendict, str, date, datetime, uuid.UUID, int, float, decimal.Decimal, None, list, tuple, bytes],
     ) -> 'SchemaFor200ResponseBodyApplicationJson':
         return super().__new__(
             cls,
@@ -94,7 +124,7 @@ _all_accept_content_types = (
 
 class BaseApi(api_client.Api):
 
-    def _post_not_more_complex_schema_response_body_for_content_types(
+    def _post_not_more_complex_schema_response_body_for_content_types_oapg(
         self: api_client.Api,
         accept_content_types: typing.Tuple[str] = _all_accept_content_types,
         stream: bool = False,
@@ -153,7 +183,7 @@ class PostNotMoreComplexSchemaResponseBodyForContentTypes(BaseApi):
         ApiResponseFor200,
         api_client.ApiResponseWithoutDeserialization
     ]:
-        return self._post_not_more_complex_schema_response_body_for_content_types(
+        return self._post_not_more_complex_schema_response_body_for_content_types_oapg(
             accept_content_types=accept_content_types,
             stream=stream,
             timeout=timeout,
@@ -174,7 +204,7 @@ class ApiForpost(BaseApi):
         ApiResponseFor200,
         api_client.ApiResponseWithoutDeserialization
     ]:
-        return self._post_not_more_complex_schema_response_body_for_content_types(
+        return self._post_not_more_complex_schema_response_body_for_content_types_oapg(
             accept_content_types=accept_content_types,
             stream=stream,
             timeout=timeout,
