@@ -105,10 +105,10 @@ public class DagaviFastAPIServerCodegen extends AbstractPythonCodegen {
         additionalProperties.put(CodegenConstants.SOURCE_FOLDER, DEFAULT_SOURCE_FOLDER);
         additionalProperties.put(CodegenConstants.PACKAGE_NAME, DEFAULT_PACKAGE_NAME);
 
-        languageSpecificPrimitives.add("List");
-        languageSpecificPrimitives.add("Dict");
-        typeMapping.put("array", "List");
-        typeMapping.put("map", "Dict");
+        languageSpecificPrimitives.add("list");
+        languageSpecificPrimitives.add("dict");
+        typeMapping.put("array", "list");
+        typeMapping.put("map", "dict");
 
         outputFolder = "generated-code" + File.separator + NAME;
         modelTemplateFiles.put("model.mustache", ".py");
@@ -355,5 +355,5 @@ public class DagaviFastAPIServerCodegen extends AbstractPythonCodegen {
     }
 
     @Override
-    public String generatorLanguageVersion() { return "3.7"; };
+    public String generatorLanguageVersion() { return "3.10"; };
 }
