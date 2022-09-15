@@ -39,19 +39,7 @@ class {{classname}}(BaseModel):
 
 {{#isModel}}
 {{#vars}}
-    {{name}}: {{#required}}{{>model-field_type}}{{/required}}{{^required}}{{>model-field_type}} | None{{/required}} = Field(alias = "{{baseName}}"{{#defaultValue}}, default = {{defaultValue}}{{/defaultValue}}{{^defaultValue}}{{^required}}, default = None{{/required}}{{/defaultValue}}
-        {{#maximum}}, l{{#exclusiveMaximum}}t{{/exclusiveMaximum}}{{^exclusiveMaximum}}e{{/exclusiveMaximum}} = {{maximum}}{{/maximum}}
-        {{#minimum}}, g{{#exclusiveMinimum}}t{{/exclusiveMinimum}}{{^exclusiveMinimum}}e{{/exclusiveMinimum}} = {{minimum}}{{/minimum}}
-        {{#minLength}}, min_length = {{minLength}}{{/minLength}}
-        {{#maxLength}}, max_length = {{maxLength}}{{/maxLength}}
-        {{^minProperties}}{{#minItems}}, min_items = {{minItems}}{{/minItems}}{{/minProperties}}
-        {{^maxProperties}}{{#maxItems}}, max_items = {{maxItems}}{{/maxItems}}{{/maxProperties}}
-        {{#minProperties}}, min_properties = {{minProperties}}{{/minProperties}}
-        {{#maxProperties}}, max_properties = {{maxProperties}}{{/maxProperties}}
-        {{#uniqueItems}}, unique_items = {{uniqueItems}}{{/uniqueItems}}
-        {{#multipleOf}}, multiple_of = {{multipleOf}}{{/multipleOf}}
-        {{#pattern}}, regex = r"{{pattern}}"{{/pattern}}
-    )
+    {{name}}: {{#required}}{{>model-field_type}}{{/required}}{{^required}}{{>model-field_type}} | None{{/required}} = Field(alias = "{{baseName}}"{{#defaultValue}}, default = {{defaultValue}}{{/defaultValue}}{{^defaultValue}}{{^required}}, default = None{{/required}}{{/defaultValue}}{{#maximum}}, l{{#exclusiveMaximum}}t{{/exclusiveMaximum}}{{^exclusiveMaximum}}e{{/exclusiveMaximum}} = {{maximum}}{{/maximum}}{{#minimum}}, g{{#exclusiveMinimum}}t{{/exclusiveMinimum}}{{^exclusiveMinimum}}e{{/exclusiveMinimum}} = {{minimum}}{{/minimum}}{{#minLength}}, min_length = {{minLength}}{{/minLength}}{{#maxLength}}, max_length = {{maxLength}}{{/maxLength}}{{^minProperties}}{{#minItems}}, min_items = {{minItems}}{{/minItems}}{{/minProperties}}{{^maxProperties}}{{#maxItems}}, max_items = {{maxItems}}{{/maxItems}}{{/maxProperties}}{{#minProperties}}, min_properties = {{minProperties}}{{/minProperties}}{{#maxProperties}}, max_properties = {{maxProperties}}{{/maxProperties}}{{#uniqueItems}}, unique_items = {{uniqueItems}}{{/uniqueItems}}{{#multipleOf}}, multiple_of = {{multipleOf}}{{/multipleOf}}{{#pattern}}, regex = r"{{pattern}}"{{/pattern}})
 {{/vars}}
 
     class Config:
