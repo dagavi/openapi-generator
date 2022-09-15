@@ -23,12 +23,6 @@ from pydantic import AnyUrl, BaseModel, EmailStr, Field, validator  # noqa: F401
 class {{classname}}(BaseModel):
     """
     {{{description}}}
-
-{{#isModel}}
-    {{#vars}}
-        {{{baseName}}}: {{{description}}}{{^required}} [Optional]{{/required}}.
-    {{/vars}}
-{{/isModel}}
     """
 {{^isModel}}
     {{#oneOf}}{{#-first}}# oneOf
