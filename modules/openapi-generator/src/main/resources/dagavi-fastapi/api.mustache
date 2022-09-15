@@ -67,10 +67,10 @@ def json_parameter(model: Any, required: bool = False, **query_kwargs):
     {{/responses}}
     tags=[{{#tags}}"{{name}}"{{^-last}},{{/-last}}{{/tags}}],
     {{#summary}}
-    summary="{{.}}",
+    summary="""{{{.}}}""",
     {{/summary}}
     {{#description}}
-    description = "{{.}}",
+    description = """{{{.}}}""",
     {{/description}}
     response_model_by_alias = True,
     response_model_exclude_none = True
@@ -87,7 +87,7 @@ async def {{operationId}}(
     {{/authMethods}}
     {{/hasAuthMethods}}
 ) -> {{returnType}}{{^returnType}}None{{/returnType}}:
-    {{#notes}}"""{{.}}"""{{/notes}}
+    {{#notes}}"""{{{.}}}"""{{/notes}}
     # TODO: Implement "{{operationId}}"
     print(f'Warning: Implement "{{operationId}}"')
 {{^-last}}
