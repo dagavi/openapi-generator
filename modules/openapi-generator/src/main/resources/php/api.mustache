@@ -262,7 +262,7 @@ use {{invokerPackage}}\ObjectSerializer;
             switch($statusCode) {
             {{/-first}}
             {{#dataType}}
-                {{^isWildcard}}case {{code}}:{{/isWildcard}}{{#isWildcard}}default:{{/isWildcard}}
+                {{^isRange}}{{^isWildcard}}case {{code}}:{{/isWildcard}}{{#isWildcard}}default:{{/isWildcard}}
                     if ('{{{dataType}}}' === '\SplFileObject') {
                         $content = $response->getBody(); //stream goes to serializer
                     } else {
@@ -276,7 +276,7 @@ use {{invokerPackage}}\ObjectSerializer;
                         ObjectSerializer::deserialize($content, '{{{dataType}}}', []),
                         $response->getStatusCode(),
                         $response->getHeaders()
-                    ];
+                    ];{{/isRange}}
             {{/dataType}}
             {{#-last}}
             }
@@ -308,14 +308,14 @@ use {{invokerPackage}}\ObjectSerializer;
             switch ($e->getCode()) {
         {{#responses}}
             {{#dataType}}
-                {{^isWildcard}}case {{code}}:{{/isWildcard}}{{#isWildcard}}default:{{/isWildcard}}
+                {{^isRange}}{{^isWildcard}}case {{code}}:{{/isWildcard}}{{#isWildcard}}default:{{/isWildcard}}
                     $data = ObjectSerializer::deserialize(
                         $e->getResponseBody(),
                         '{{{dataType}}}',
                         $e->getResponseHeaders()
                     );
                     $e->setResponseObject($data);
-                    break;
+                    break;{{/isRange}}
             {{/dataType}}
         {{/responses}}
             }

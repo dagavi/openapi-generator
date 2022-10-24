@@ -38,31 +38,44 @@ Order <- R6::R6Class(
     #' @param complete complete. Default to FALSE.
     #' @param ... Other optional arguments.
     #' @export
-    initialize = function(
-        `id` = NULL, `petId` = NULL, `quantity` = NULL, `shipDate` = NULL, `status` = NULL, `complete` = FALSE, ...
-    ) {
+    initialize = function(`id` = NULL, `petId` = NULL, `quantity` = NULL, `shipDate` = NULL, `status` = NULL, `complete` = FALSE, ...) {
       if (!is.null(`id`)) {
-        stopifnot(is.numeric(`id`), length(`id`) == 1)
+        if (!(is.numeric(`id`) && length(`id`) == 1)) {
+          stop(paste("Error! Invalid data for `id`. Must be an integer:", `id`))
+        }
         self$`id` <- `id`
       }
       if (!is.null(`petId`)) {
-        stopifnot(is.numeric(`petId`), length(`petId`) == 1)
+        if (!(is.numeric(`petId`) && length(`petId`) == 1)) {
+          stop(paste("Error! Invalid data for `petId`. Must be an integer:", `petId`))
+        }
         self$`petId` <- `petId`
       }
       if (!is.null(`quantity`)) {
-        stopifnot(is.numeric(`quantity`), length(`quantity`) == 1)
+        if (!(is.numeric(`quantity`) && length(`quantity`) == 1)) {
+          stop(paste("Error! Invalid data for `quantity`. Must be an integer:", `quantity`))
+        }
         self$`quantity` <- `quantity`
       }
       if (!is.null(`shipDate`)) {
-        stopifnot(is.character(`shipDate`), length(`shipDate`) == 1)
+        if (!is.character(`shipDate`)) {
+          stop(paste("Error! Invalid data for `shipDate`. Must be a string:", `shipDate`))
+        }
         self$`shipDate` <- `shipDate`
       }
       if (!is.null(`status`)) {
-        stopifnot(is.character(`status`), length(`status`) == 1)
+        if (!(`status` %in% c("placed", "approved", "delivered"))) {
+          stop(paste("Error! \"", `status`, "\" cannot be assigned to `status`. Must be \"placed\", \"approved\", \"delivered\".", sep = ""))
+        }
+        if (!(is.character(`status`) && length(`status`) == 1)) {
+          stop(paste("Error! Invalid data for `status`. Must be a string:", `status`))
+        }
         self$`status` <- `status`
       }
       if (!is.null(`complete`)) {
-        stopifnot(is.logical(`complete`), length(`complete`) == 1)
+        if (!(is.logical(`complete`) && length(`complete`) == 1)) {
+          stop(paste("Error! Invalid data for `complete`. Must be a boolean:", `complete`))
+        }
         self$`complete` <- `complete`
       }
     },
@@ -124,6 +137,9 @@ Order <- R6::R6Class(
         self$`shipDate` <- this_object$`shipDate`
       }
       if (!is.null(this_object$`status`)) {
+        if (!is.null(this_object$`status`) && !(this_object$`status` %in% c("placed", "approved", "delivered"))) {
+          stop(paste("Error! \"", this_object$`status`, "\" cannot be assigned to `status`. Must be \"placed\", \"approved\", \"delivered\".", sep = ""))
+        }
         self$`status` <- this_object$`status`
       }
       if (!is.null(this_object$`complete`)) {
@@ -206,6 +222,9 @@ Order <- R6::R6Class(
       self$`petId` <- this_object$`petId`
       self$`quantity` <- this_object$`quantity`
       self$`shipDate` <- this_object$`shipDate`
+      if (!is.null(this_object$`status`) && !(this_object$`status` %in% c("placed", "approved", "delivered"))) {
+        stop(paste("Error! \"", this_object$`status`, "\" cannot be assigned to `status`. Must be \"placed\", \"approved\", \"delivered\".", sep = ""))
+      }
       self$`status` <- this_object$`status`
       self$`complete` <- this_object$`complete`
       self
@@ -260,18 +279,19 @@ Order <- R6::R6Class(
     print = function() {
       print(jsonlite::prettify(self$toJSONString()))
       invisible(self)
-    }),
-    # Lock the class to prevent modifications to the method or field
-    lock_class = TRUE
+    }
+  ),
+  # Lock the class to prevent modifications to the method or field
+  lock_class = TRUE
 )
 ## Uncomment below to unlock the class to allow modifications of the method or field
-#Order$unlock()
+# Order$unlock()
 #
 ## Below is an example to define the print fnuction
-#Order$set("public", "print", function(...) {
-#  print(jsonlite::prettify(self$toJSONString()))
-#  invisible(self)
-#})
+# Order$set("public", "print", function(...) {
+#   print(jsonlite::prettify(self$toJSONString()))
+#   invisible(self)
+# })
 ## Uncomment below to lock the class to prevent modifications to the method or field
-#Order$lock()
+# Order$lock()
 

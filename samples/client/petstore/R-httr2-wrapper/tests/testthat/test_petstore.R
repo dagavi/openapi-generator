@@ -21,6 +21,27 @@ pet_api$api_client$username <- "username123"
 pet_api$api_client$password <- "password123"
 result <- pet_api$add_pet(pet)
 
+test_that("Test discriminator and mapping", {
+  d <- '{"breed": "bulldog","color":"white","className":"Dog"}'
+  dog <- ApiClient$new()$deserialize(d, "Animal", loadNamespace("petstore"))
+  expect_equal(class(dog)[1], "Dog")
+  expect_equal(dog$breed, "bulldog")
+  expect_equal(dog$color, "white")
+  expect_equal(dog$className, "Dog")
+})
+
+test_that("Invalid enum value test", {
+  expect_error(Pet$new("name_test",
+    photoUrls = list("photo_test", "second test"),
+    category = Category$new(id = 450, name = "test_cat"),
+    id = pet_id,
+    tags = list(
+      Tag$new(id = 123, name = "tag_test"), Tag$new(id = 456, name = "unknown")
+    ),
+    status = "error_available"
+  ), "Error! \"error_available\" cannot be assigned to `status`. Must be \"available\", \"pending\", \"sold\".")
+})
+
 test_that("Additional Properties test", {
   # test tag
   t <- Tag$new(id = 393, name = "something")
@@ -234,7 +255,79 @@ test_that("GetPetById with data_file", {
   expect_equal(response$name, "name_test")
 })
 
+test_that("array test in path parameters", {
+  fake_api <- FakeApi$new()
+  # array input for path parameter
+  #array_dummy <- list(1, 2, 2, 3)
+  array_dummy <- list("hello world", "1&2")
+  expect_error(fake_api$fake_path_array(array_dummy), "")
+})
+
+test_that("optional body parameters test", {
+  fake_api <- FakeApi$new()
+  expect_error(fake_api$add_pet_optional(), "")
+
+  pet_optional_test <- Pet$new("name_test",
+    photoUrls = list("photo_test", "second test"),
+    category = Category$new(id = 44550, name = "test_cat"),
+    id = 44550,
+    tags = list(
+      Tag$new(id = 44550, name = "tag_test"), Tag$new(id = 4880, name = "unknown 2")
+    ),
+    status = "available"
+  )
+  expect_error(fake_api$add_pet_optional(pet_optional_test), "")
+  #result <- fake_api$add_pet_optional(pet_optional_test)
+
+  #response <- pet_api$get_pet_by_id(44550)
+  #expect_equal(response$id, 44550)
+  #expect_equal(response$name, "name_test")
+  #expect_equal(
+  #  response$photoUrls,
+  #  list("photo_test", "second test")
+  #)
+  #expect_equal(response$status, "available")
+  #expect_equal(response$category, Category$new(id = 44500, name = "test_cat"))
+
+  #expect_equal(pet$tags, response$tags)
+  #expect_equal(
+  #  response$tags,
+  #  list(Tag$new(id = 44550, name = "tag_test"), Tag$new(id = 4880, name = "unknown"))
+  #)
+})
+
+test_that("set validation test", {
+  fake_api <- FakeApi$new()
+  # array input invalid (not unique)
+  set_dummy <- list(1, 2, 2, 3)
+  array_dummy <- list(1, 2, 2, 3)
+  result <- tryCatch(fake_api$fake_set_query(set_dummy, array_dummy),
+                     ApiException = function(ex) ex
+  )
+
+  expect_equal(result$ApiException$reason, "Invalid value for `set_dummy` when calling FakeApi$fake_set_query. Items must be unique.")
+
+  # vector input invalid (not unique)
+  set_dummy <- c(1, 2, 2, 3)
+  array_dummy <- c(1, 2, 2, 3)
+  result <- tryCatch(fake_api$fake_set_query(set_dummy, array_dummy),
+                     ApiException = function(ex) ex
+  )
+
+  expect_equal(result$ApiException$reason, "Invalid value for `set_dummy` when calling FakeApi$fake_set_query. Items must be unique.")
+})
+
 test_that("find_pets_by_status", {
+  # input invalid
+  var_status <- c("something") # array[character] | Tags to filter by
+  result <- tryCatch(pet_api$find_pets_by_status(var_status),
+                     ApiException = function(ex) ex
+  )
+
+  expect_equal(result$ApiException$reason, "Invalid value for `status` when calling PetApi$find_pets_by_status. Must be [available, pending, sold].")
+})
+
+test_that("find_pets_by_tags", {
   pet_tag_test <- Pet$new("name_test",
     photoUrls = list("photo_test", "second test"),
     category = Category$new(id = 4455, name = "test_cat"),
@@ -301,6 +394,33 @@ test_that("Tests validateJSON", {
   
 })
 
+# test set in object
+test_that("Tests set in object", {
+  invalid_set  <-
+  '{"self": 123, "private": "red", "super": "something", "set_test": ["1","2","2","4"]}'
+  expect_error(Special$new()$fromJSON(invalid_set), "Error! Items in `set_test` are not unique")
+
+  special_json <-
+  '{"self": 123, "private": "red", "super": "something", "set_test": ["1","2","4"]}'
+  # test fromJSON
+  special <- Special$new()$fromJSON(special_json)
+  expect_equal(special$item_self, 123)
+  expect_equal(special$item_private, "red")
+  expect_equal(special$item_super, "something")
+
+  # test toJSONString
+  expect_true(grepl('"private"', special$toJSONString()))
+  expect_true(grepl('"self"', special$toJSONString()))
+  expect_true(grepl('"super"', special$toJSONString()))
+  expect_equal('{"set_test":["1","2","4"],"self":123,"private":"red","super":"something"}', special$toJSONString())
+
+  # round trip test
+  s1 <- Special$new()$fromJSONString(special_json)
+  s2 <- Special$new()$fromJSONString(s1$toJSONString())
+  expect_equal(s1, s2)
+
+})
+
 # test object with special item names: self, private, super
 test_that("Tests special item names", {
   special_json <-
@@ -312,7 +432,7 @@ test_that("Tests special item names", {
   expect_equal(special$item_private, "red")
   expect_equal(special$item_super, "something")
 
-  # test toJSONString 
+  # test toJSONString
   expect_true(grepl('"private"', special$toJSONString()))
   expect_true(grepl('"self"', special$toJSONString()))
   expect_true(grepl('"super"', special$toJSONString()))
@@ -470,4 +590,36 @@ test_that("Tests anyOf", {
   expect_error(pig$fromJSON('{}'), 'No match found when deserializing the payload into AnyOfPig with anyOf schemas BasquePig, DanishPig. Details:  The JSON input ` \\{\\} ` is invalid for BasquePig: the required field `className` is missing\\., The JSON input ` \\{\\} ` is invalid for DanishPig: the required field `className` is missing\\.')
   expect_error(pig$validateJSON('{}'), 'No match found when deserializing the payload into AnyOfPig with anyOf schemas BasquePig, DanishPig. Details:  The JSON input ` \\{\\} ` is invalid for BasquePig: the required field `className` is missing\\., The JSON input ` \\{\\} ` is invalid for DanishPig: the required field `className` is missing\\.')
 
+})
+
+test_that("Tests URL validation", {
+  valid_json <- '{"className":"date","percent_description":"abc","url_property":"https://stackoverflow.com/a/1/b/2"}'
+  Date$public_methods$validateJSON(valid_json) # shouldn't throw exception
+
+  valid_json <- '{"className":"date","percent_description":"abc","url_property":"https://abc.com/a/1/b/2"}'
+  Date$public_methods$validateJSON(valid_json) # shouldn't throw exception
+
+  invalid_json <- '{"className":"date","percent_description":"abc","url_property":"invalid_url"}'
+  expect_error(Date$public_methods$validateJSON(invalid_json), 'Error! Invalid data for `url_property`. Must be a URL: invalid_url') # should throw exception
+
+  # test fromJSONString with valid data
+  d <- Date$new()
+  d$fromJSONString(valid_json)
+  expect_equal(d$className, "date")
+  expect_equal(d$percent_description, "abc")
+  expect_equal(d$url_property, "https://abc.com/a/1/b/2")
+
+  # test fromJSONString with invalid data
+  d <- Date$new()
+  expect_error(d$fromJSONString(invalid_json), 'Error! Invalid data for `url_property`. Must be a URL: invalid_url') # should throw exception
+})
+
+
+test_that("Order and datetime test", {
+  # test tag
+  t <- Order$new(id = 393, petId = 12930, quantity = 12, shipDate = "2019-09-29T19:39:29Z", status = "approved")
+
+  expect_equal(t$toJSONString(), "{\"id\":393,\"petId\":12930,\"quantity\":12,\"shipDate\":\"2019-09-29T19:39:29Z\",\"status\":\"approved\",\"complete\":false}")
+
+  expect_error(Order$new(id = 393, petId = 12930, quantity = 12, shipDate = TRUE, status = "approved"), "Error! Invalid data for `shipDate`. Must be a string: TRUE")
 })

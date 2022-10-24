@@ -59,6 +59,11 @@
   infoLink: "https://e.baidu.com"
   pinned: false
 -
+  caption: "Bandwidth"
+  image: "img/companies/bandwidth.png"
+  infoLink: "https://dev.bandwidth.com/"
+  pinned: false
+-
   caption: "Banzai Cloud"
   image: "img/companies/banzai_cloud.png"
   infoLink: "https://banzaicloud.com/"
@@ -507,6 +512,11 @@
   caption: "TUI InfoTec GmbH"
   image: "img/companies/infotec.png"
   infoLink: "http://www.tui-infotec.com/"
+  pinned: false
+-
+  caption: "Twilio"
+  image: "img/companies/twilio.png"
+  infoLink: "https://twilio.com"
   pinned: false
 -
   caption: "Twitter"

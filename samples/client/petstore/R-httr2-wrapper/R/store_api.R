@@ -211,7 +211,7 @@
 #' ####################  place_order  ####################
 #'
 #' library(petstore)
-#' var_order <- Order$new() # Order | order placed for purchasing the pet
+#' var_order <- Order$new(123, 123, 123, "shipDate_example", "placed", "complete_example") # Order | order placed for purchasing the pet
 #'
 #' #Place an order for a pet
 #' api_instance <- petstore_api$new()
@@ -314,7 +314,7 @@ StoreApi <- R6::R6Class(
 
       local_var_url_path <- "/store/order/{orderId}"
       if (!missing(`order_id`)) {
-        local_var_url_path <- gsub(paste0("\\{", "orderId", "\\}"), URLencode(as.character(`order_id`), reserved = TRUE), local_var_url_path)
+        local_var_url_path <- gsub("\\{orderId\\}", URLencode(as.character(`order_id`), reserved = TRUE), local_var_url_path)
       }
 
 
@@ -434,15 +434,15 @@ StoreApi <- R6::R6Class(
       if (local_var_resp$status_code >= 200 && local_var_resp$status_code <= 299) {
         # save response in a file
         if (!is.null(data_file)) {
-            write(local_var_resp$response, data_file)
+          write(local_var_resp$response, data_file)
         }
 
         deserialized_resp_obj <- tryCatch(
           self$api_client$deserialize(local_var_resp$response, "map(integer)", loadNamespace("petstore")),
           error = function(e) {
-             rlang::abort(message = "Failed to deserialize response",
-                          .subclass = "ApiException",
-                          ApiException = ApiException$new(http_response = local_var_resp))
+            rlang::abort(message = "Failed to deserialize response",
+                         .subclass = "ApiException",
+                         ApiException = ApiException$new(http_response = local_var_resp))
           }
         )
         local_var_resp$content <- deserialized_resp_obj
@@ -537,7 +537,7 @@ StoreApi <- R6::R6Class(
 
       local_var_url_path <- "/store/order/{orderId}"
       if (!missing(`order_id`)) {
-        local_var_url_path <- gsub(paste0("\\{", "orderId", "\\}"), URLencode(as.character(`order_id`), reserved = TRUE), local_var_url_path)
+        local_var_url_path <- gsub("\\{orderId\\}", URLencode(as.character(`order_id`), reserved = TRUE), local_var_url_path)
       }
 
 
@@ -563,15 +563,15 @@ StoreApi <- R6::R6Class(
       if (local_var_resp$status_code >= 200 && local_var_resp$status_code <= 299) {
         # save response in a file
         if (!is.null(data_file)) {
-            write(local_var_resp$response, data_file)
+          write(local_var_resp$response, data_file)
         }
 
         deserialized_resp_obj <- tryCatch(
           self$api_client$deserialize(local_var_resp$response, "Order", loadNamespace("petstore")),
           error = function(e) {
-             rlang::abort(message = "Failed to deserialize response",
-                          .subclass = "ApiException",
-                          ApiException = ApiException$new(http_response = local_var_resp))
+            rlang::abort(message = "Failed to deserialize response",
+                         .subclass = "ApiException",
+                         ApiException = ApiException$new(http_response = local_var_resp))
           }
         )
         local_var_resp$content <- deserialized_resp_obj
@@ -652,7 +652,7 @@ StoreApi <- R6::R6Class(
       }
 
 
-      if (!missing(`order`)) {
+      if (!is.null(`order`)) {
         local_var_body <- `order`$toJSONString()
       } else {
         body <- NULL
@@ -682,15 +682,15 @@ StoreApi <- R6::R6Class(
       if (local_var_resp$status_code >= 200 && local_var_resp$status_code <= 299) {
         # save response in a file
         if (!is.null(data_file)) {
-            write(local_var_resp$response, data_file)
+          write(local_var_resp$response, data_file)
         }
 
         deserialized_resp_obj <- tryCatch(
           self$api_client$deserialize(local_var_resp$response, "Order", loadNamespace("petstore")),
           error = function(e) {
-             rlang::abort(message = "Failed to deserialize response",
-                          .subclass = "ApiException",
-                          ApiException = ApiException$new(http_response = local_var_resp))
+            rlang::abort(message = "Failed to deserialize response",
+                         .subclass = "ApiException",
+                         ApiException = ApiException$new(http_response = local_var_resp))
           }
         )
         local_var_resp$content <- deserialized_resp_obj
