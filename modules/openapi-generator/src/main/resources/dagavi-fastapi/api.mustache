@@ -15,7 +15,7 @@ from fastapi import (  # noqa: F401
     Security,
     status,
 )
-
+from {{packageName}}.dependencies.query_model import json_parameter
 from {{modelPackage}}.extra_models import TokenModel  # noqa: F401
 {{#imports}}
 {{import}}
@@ -23,31 +23,6 @@ from {{modelPackage}}.extra_models import TokenModel  # noqa: F401
 {{#securityImports.0}}from {{packageName}}.security_api import {{#securityImports}}get_token_{{.}}{{^-last}}, {{/-last}}{{/securityImports}}{{/securityImports.0}}
 
 router = APIRouter()
-
-import pydantic
-from typing import Any
-from pydantic import Json, ValidationError
-from fastapi import HTTPException
-
-def json_parameter(model: Any, required: bool = False, **query_kwargs):
-    """Parse JSON-encoded query parameters as pydantic models.
-    The function returns a `Depends()` instance that takes the JSON-encoded value from
-    the query parameter and converts it to a Pydantic model, definedcby the `model` attribute.
-
-    Fork of: https://gist.github.com/imankulov/cef71dd5a01f9a27caeb66f7bedaf241
-    Via: https://github.com/tiangolo/fastapi/issues/884#issuecomment-1149732095
-    """
-
-    def get_parsed_object(value: Json = Query(**query_kwargs)):
-        if value is None and not required:
-            return None
-        try:
-            return pydantic.parse_obj_as(model, value)
-        except ValidationError as err:
-            raise HTTPException(400, detail=err.errors())
-
-    return Depends(get_parsed_object)
-
 
 {{#operations}}
 {{#operation}}

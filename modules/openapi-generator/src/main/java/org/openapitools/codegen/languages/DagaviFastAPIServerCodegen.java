@@ -145,14 +145,19 @@ public class DagaviFastAPIServerCodegen extends AbstractPythonCodegen {
         modelPackage = packageName + "." + modelPackage;
         apiPackage = packageName + "." + apiPackage;
 
+        String rootPath = String.join(File.separator, new String[]{sourceFolder, packageName.replace('.', File.separatorChar)});
+        String dependenciesPath = String.join(File.separator, new String[]{rootPath, "dependencies"});
+
         supportingFiles.add(new SupportingFile("README.mustache", "", "README.md"));
         supportingFiles.add(new SupportingFile("openapi.mustache", "", "openapi.yaml"));
-        supportingFiles.add(new SupportingFile("main.mustache", String.join(File.separator, new String[]{sourceFolder, packageName.replace('.', File.separatorChar)}), "main.py"));
+        supportingFiles.add(new SupportingFile("main.mustache", rootPath, "main.py"));
         supportingFiles.add(new SupportingFile("docker-compose.mustache", "", "docker-compose.yaml"));
         supportingFiles.add(new SupportingFile("Dockerfile.mustache", "", "Dockerfile"));
         supportingFiles.add(new SupportingFile("requirements.mustache", "", "requirements.txt"));
-        supportingFiles.add(new SupportingFile("security_api.mustache", String.join(File.separator, new String[]{sourceFolder, packageName.replace('.', File.separatorChar)}), "security_api.py"));
+        supportingFiles.add(new SupportingFile("security_api.mustache", rootPath, "security_api.py"));
         supportingFiles.add(new SupportingFile("extra_models.mustache", StringUtils.substringAfter(modelFileFolder(), outputFolder), "extra_models.py"));
+        supportingFiles.add(new SupportingFile("__init__.mustache", dependenciesPath, "__init__.py"));
+        supportingFiles.add(new SupportingFile("query_model.mustache", dependenciesPath, "query_model.py"));
 
         // Add __init__.py to all sub-folders under namespace pkg
         StringBuilder namespacePackagePath = new StringBuilder(String.join(File.separator, new String[]{sourceFolder, StringUtils.substringBefore(packageName, ".")}));
